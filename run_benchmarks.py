@@ -24,6 +24,8 @@ class ArgumentsNamespace(argparse.Namespace):
     list: bool
     command: str
     output: str
+    ntasks: Optional[int]
+    nworkers: Optional[int]
 
 
 if __name__ == "__main__":
@@ -32,9 +34,13 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-l", "--list", action="store_false")
-    parser.add_argument("-c", "--command", action="store", default=default_command_id)
-    parser.add_argument("-o", "--output", action="store", default=default_output_filepath)
+    parser.add_argument("-c", "--command", action="store", type=str, default=default_command_id)
+    parser.add_argument("-o", "--output", action="store", type=str, default=default_output_filepath)
+    parser.add_argument("-nt", "--ntasks", action="store", type=int)
+    parser.add_argument("-nw", "--nworkers", action="store", type=int)
     args = parser.parse_args(namespace=ArgumentsNamespace())
+
+    print("args", args)
 
     if args.list:
         print("possible commands configurations:", commands.keys())
