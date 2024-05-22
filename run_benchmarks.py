@@ -40,10 +40,8 @@ if __name__ == "__main__":
     parser.add_argument("-nw", "--nworkers", action="store", type=int)
     args = parser.parse_args(namespace=ArgumentsNamespace())
 
-    print("args", args)
-
     if args.list:
-        print("possible commands configurations:", commands.keys())
+        print("possible commands configurations:", list(commands.keys()))
         exit(0)
     if args.command not in commands:
         print(f"'{args.command}' not recognized as a command configuration id")
