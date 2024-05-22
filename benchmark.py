@@ -139,6 +139,7 @@ def run_benchmark_threaded_pool(benchmark: Benchmark[Task], command: OpenInterpr
             status = "error"
             start = None
             end = None
+            messages = []
         finally:
             logger.debug(f"  task {zstask['id']}: DONE!")
             return {
