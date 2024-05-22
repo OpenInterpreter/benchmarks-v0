@@ -50,6 +50,16 @@ if __name__ == "__main__":
     print("command configuration:", args.command)
     print("output file:", args.output)
 
-    b = gaia.benchmark(8)
-    results = run_benchmark_threaded_pool(b, args.command)
+    if args.ntasks is None:
+        b = gaia.benchmark()
+    else:
+        print("number of tasks:", args.ntasks)
+        b = gaia.benchmark(args.ntasks)
+    
+    if args.nworkers is None:
+        results = run_benchmark_threaded_pool(b, args.command, args.ntasks)
+    else:
+        print("number of workers:", args.nworkers)
+        results = run_benchmark_threaded_pool(b, args.command, args.nworkers)
+
     save_results(results, args.output)
