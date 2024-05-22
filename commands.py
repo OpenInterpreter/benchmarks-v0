@@ -18,6 +18,13 @@ commands: Dict[str, OpenInterpreterCommand] = {
         "api_key": openapi_key,
         "custom_instructions": custom_instructions
     },
+    "gpt4turbo": {
+        "auto_run": True,
+        "api_key": openapi_key,
+        "custom_instructions": custom_instructions,
+        "model": "gpt-4-turbo",
+        "context_window": 128000,
+    },
     "gpt4o": {
         "auto_run": True,
         "model": "openai/gpt-4o",
