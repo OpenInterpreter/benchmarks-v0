@@ -1,6 +1,7 @@
-from concurrent.futures import ThreadPoolExecutor
 import logging
+import sys
 import traceback
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from queue import Queue
 from threading import Thread
@@ -135,7 +136,7 @@ def run_benchmark_threaded_pool(benchmark: Benchmark[Task], command: OpenInterpr
             status = benchmark.task_result_status(task, messages)
         except Exception as e:
             logger.debug(f"  task {zstask['id']}: EXCEPTION!")
-            logger.debug(e)
+            logger.debug(traceback.print_exc(file=sys.stdout))
             status = "error"
             start = None
             end = None
