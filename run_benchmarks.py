@@ -56,10 +56,12 @@ if __name__ == "__main__":
         print("number of tasks:", args.ntasks)
         b = gaia.benchmark(args.ntasks)
     
+    command = commands[args.command]
+    
     if args.nworkers is None:
-        results = run_benchmark_threaded_pool(b, args.command, args.ntasks)
+        results = run_benchmark_threaded_pool(b, command, args.ntasks)
     else:
         print("number of workers:", args.nworkers)
-        results = run_benchmark_threaded_pool(b, args.command, args.nworkers)
+        results = run_benchmark_threaded_pool(b, command, args.nworkers)
 
     save_results(results, args.output)
