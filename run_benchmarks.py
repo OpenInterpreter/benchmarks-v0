@@ -33,7 +33,7 @@ if __name__ == "__main__":
     default_output_filepath = "output.csv"
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-l", "--list", action="store_false")
+    parser.add_argument("-l", "--list", action="store_true")
     parser.add_argument("-c", "--command", action="store", type=str, default=default_command_id)
     parser.add_argument("-o", "--output", action="store", type=str, default=default_output_filepath)
     parser.add_argument("-nt", "--ntasks", action="store", type=int)
