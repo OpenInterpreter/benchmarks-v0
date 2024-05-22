@@ -111,19 +111,18 @@ commands: Dict[str, OpenInterpreterCommand] = {
 }
 
 
-def consume_results(results: List[TaskResult]):
+def save_results(results: List[TaskResult], filepath: str = "output.csv"):
     if len(results) > 0:
         f = io.StringIO("")
         with io.StringIO("") as f:
             writer = csv.DictWriter(f, results[0].keys())
             writer.writeheader()
             writer.writerows(results)
-            with open("output.csv", "w") as csv_file:
+            with open(filepath, "w") as csv_file:
                 v = f.getvalue()
                 csv_file.write(v)
 
 
-b = gaia_benchmark()
-# results = run_benchmark(b, commands["gpt4"])
+b = gaia_benchmark(8)
 results = run_benchmark_threaded_pool(b, commands["gpt35turbo"])
-consume_results(results)
+save_results(results)
