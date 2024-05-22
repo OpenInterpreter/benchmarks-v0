@@ -54,8 +54,8 @@ class TaskResult(TypedDict):
     task_id: str
     command: OpenInterpreterCommand
     prompt: str
-    start: datetime
-    end: datetime
+    start: Optional[datetime]
+    end: Optional[datetime]
     messages: List[LMC]
     status: ResultStatus
 
@@ -137,11 +137,10 @@ def run_benchmark_threaded_pool(benchmark: Benchmark[Task], command: OpenInterpr
             logger.debug(f"  task {zstask['id']}: EXCEPTION!")
             logger.debug(e)
             status = "error"
+            start = None
+            end = None
         finally:
             logger.debug(f"  task {zstask['id']}: DONE!")
-            # the face that start, messages, and end are visible in this block
-            # is very strange and likely unsound.
-            # Python was a mistake.
             return {
                 "task_id": zstask["id"],
                 "command": command,
