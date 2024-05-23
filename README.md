@@ -17,7 +17,8 @@ git clone https://github.com/imapersonman/oi-benchmarks.git \
   && cd oi-benchmarks \
   && python -m venv .venv \
   && source .venv/bin/activate \
-  && python -m pip install -r requirements.txt
+  && python -m pip install -r requirements.txt \
+  && docker build -t worker .
 ```
 
 ## Running Benchmarks
