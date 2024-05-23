@@ -16,5 +16,6 @@ This repo is used to run various AI benchmarks.  Currently, only GAIA is support
 git clone https://github.com/imapersonman/oi-benchmarks.git \
 && cd oi-benchmarks \
 && python -m venv .venv \
+&& source .venv/bin/activate
 && python -m pip install -r requirements.txt
 ```
