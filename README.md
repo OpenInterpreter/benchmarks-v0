@@ -10,7 +10,7 @@ Make sure the following software is installed on your computer.
 - [Python](https://www.python.org)
 - [Docker](https://www.docker.com/)
 
-Copy-paste te following lines into your terminal if you're feeling dangerous.
+Copy-paste the following lines into your terminal if you're feeling dangerous.
 
 ```bash
 git clone https://github.com/imapersonman/oi-benchmarks.git \
