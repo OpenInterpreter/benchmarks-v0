@@ -4,7 +4,7 @@ import argparse
 from typing import List, Optional
 
 import gaia
-from benchmark import TaskResult, run_benchmark_threaded_pool
+from benchmark import DockerBenchmarkRunner, TaskResult, run_benchmark_threaded_pool
 from commands import commands
 
 
@@ -59,9 +59,9 @@ if __name__ == "__main__":
     command = commands[args.command]
     
     if args.nworkers is None:
-        results = run_benchmark_threaded_pool(b, command, args.ntasks)
+        results = run_benchmark_threaded_pool(b, command, DockerBenchmarkRunner(), args.ntasks)
     else:
         print("number of workers:", args.nworkers)
-        results = run_benchmark_threaded_pool(b, command, args.nworkers)
+        results = run_benchmark_threaded_pool(b, command, DockerBenchmarkRunner(), args.nworkers)
 
     save_results(results, args.output)

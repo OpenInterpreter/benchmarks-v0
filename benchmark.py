@@ -1,6 +1,14 @@
+from contextlib import contextmanager
+import json
 import logging
+import os
+from pathlib import Path
+import subprocess
 import sys
+import tempfile
 import traceback
+import uuid
+import shlex
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from queue import Queue
@@ -8,8 +16,8 @@ from threading import Thread
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Callable, Dict, Generic, List, Literal, NotRequired, Optional, Tuple, TypeVar, TypedDict, cast
-import uuid
 
+import worker
 from interpreter import OpenInterpreter
 
 
@@ -70,29 +78,43 @@ class Benchmark(Generic[Task]):
 
 class BenchmarkRunner(ABC):
     @abstractmethod
-    def run(self, command: OpenInterpreterCommand, prompt: str) -> List[LMC]:
+    def run(self, command: OpenInterpreterCommand, prompt: str, display: bool) -> List[LMC]:
         ...
 
 
 class DefaultBenchmarkRunner(BenchmarkRunner):
-    def run(self, command: OpenInterpreterCommand, prompt: str) -> Tuple[datetime, List[LMC], datetime]:
-        interpreter = command_to_interpreter(command)
-        start = datetime.now()
-
-        try:
-            output = cast(List, interpreter.chat(prompt, display=False, stream=False))
-        except KeyboardInterrupt:
-            output = [*interpreter.messages, { "role": "error", "content": "KeyboardInterrupt" }]
-        except Exception as e:
-            trace = traceback.format_exc()
-            output = [*interpreter.messages, { "role": "error", "content": trace }]
-        finally:
-            end = datetime.now()
-            interpreter.computer.terminate()
-            return start, output, end
+    def run(self, command: OpenInterpreterCommand, prompt: str, display: bool) -> List[LMC]:
+        return worker.run(command, prompt, display) # type: ignore
 
 
-def run_benchmark(benchmark: Benchmark, command: OpenInterpreterCommand) -> List[TaskResult]:
+class DockerBenchmarkRunner(BenchmarkRunner):
+    WORKER_NAME = "worker"
+
+    def run(self, command: OpenInterpreterCommand, prompt: str, display: bool) -> List[LMC]:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # with self.temp_docker_volume() as volume_name:
+            command_json_str = json.dumps(command)
+            dcmd = [
+                "docker", "run", "-t",
+                "-v", f"{temp_dir}:{temp_dir}",
+                DockerBenchmarkRunner.WORKER_NAME,
+                command_json_str, f"{shlex.quote(prompt)}", temp_dir
+            ]
+            print(" ".join(dcmd))
+            subprocess.run(dcmd)
+            with open(Path(temp_dir) / worker.OUTPUT_PATH) as f:
+                messages = json.load(f)
+                return messages
+    
+    @contextmanager
+    def temp_docker_volume(self):
+        result = subprocess.run(["docker", "volume", "create"], stdout=subprocess.PIPE, text=True)
+        volume_name = result.stdout.strip()
+        yield volume_name
+        subprocess.run(["docker", "volume", "rm", volume_name], stdout=subprocess.DEVNULL)
+    
+
+def run_benchmark(benchmark: Benchmark, command: OpenInterpreterCommand, display: bool = False) -> List[TaskResult]:
     all_tasks = benchmark.get_tasks()
     runner = DefaultBenchmarkRunner()
     results: List[TaskResult] = []
@@ -103,7 +125,9 @@ def run_benchmark(benchmark: Benchmark, command: OpenInterpreterCommand) -> List
         zstask = benchmark.task_to_id_prompt(task)
 
         logger.debug(f"  Running task {zstask['id']}...")
-        start, messages, end  = runner.run(command, zstask["prompt"])
+        start = datetime.now()
+        messages  = runner.run(command, zstask["prompt"], display=display)
+        end = datetime.now()
 
         status = benchmark.task_result_status(task, messages)
         result: TaskResult = {
@@ -123,25 +147,24 @@ def run_benchmark(benchmark: Benchmark, command: OpenInterpreterCommand) -> List
     return results
 
 
-def run_benchmark_threaded_pool(benchmark: Benchmark[Task], command: OpenInterpreterCommand, n_threads: Optional[int] = None) -> List[TaskResult]:
+def run_benchmark_threaded_pool(benchmark: Benchmark[Task], command: OpenInterpreterCommand, runner: BenchmarkRunner, n_threads: Optional[int] = None, display: bool = False) -> List[TaskResult]:
     all_tasks = benchmark.get_tasks()
-    runner = DefaultBenchmarkRunner()
     task_results: List[TaskResult] = []
 
     def run_task(task: Task) -> TaskResult:
         zstask = benchmark.task_to_id_prompt(task)
         logger.debug(f"  task {zstask['id']}: RUNNING...")
+        start = datetime.now()
         try:
-            start, messages, end = runner.run(command, zstask["prompt"])
+            messages = runner.run(command, zstask["prompt"], display=display)
             status = benchmark.task_result_status(task, messages)
         except Exception as e:
             logger.debug(f"  task {zstask['id']}: EXCEPTION!")
             logger.debug(traceback.print_exc(file=sys.stdout))
             status = "error"
-            start = None
-            end = None
             messages = []
         finally:
+            end = datetime.now()
             logger.debug(f"  task {zstask['id']}: DONE!")
             return {
                 "task_id": zstask["id"],
@@ -164,7 +187,7 @@ def run_benchmark_threaded_pool(benchmark: Benchmark[Task], command: OpenInterpr
     return task_results
 
 
-def run_benchmark_threaded(benchmark: Benchmark[Task], command: OpenInterpreterCommand, n_threads: int = 2) -> List[TaskResult]:
+def run_benchmark_threaded(benchmark: Benchmark[Task], command: OpenInterpreterCommand, n_threads: int = 2, display: bool = False) -> List[TaskResult]:
     all_tasks = benchmark.get_tasks()
     runner = DefaultBenchmarkRunner()
     results: Queue[TaskResult] = Queue()
@@ -180,7 +203,9 @@ def run_benchmark_threaded(benchmark: Benchmark[Task], command: OpenInterpreterC
             task = task_queue.get()
             zstask = benchmark.task_to_id_prompt(task)
             logger.debug(f"  task {zstask['id']} on thread {thread_id}: RUNNING...")
-            start, messages, end = runner.run(command, zstask["prompt"])
+            start = datetime.now()
+            messages = runner.run(command, zstask["prompt"], display=display)
+            end = datetime.now()
             status = benchmark.task_result_status(task, messages)
             logger.debug(f"  task {zstask['id']} on thread {thread_id}: DONE!")
             results.put({
