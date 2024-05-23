@@ -32,7 +32,7 @@ huggingface-cli login
 
 This section assumes:
 - `oi-benchmarks` (downloaded via git in the preview section) is set as the current working directory.
-- You've activated the virtualenv with the installed prerequisite packages, and
+- You've activated the virtualenv with the installed prerequisite packages.
 - Your `OPENAI_API_KEY` environment variable is set with a valid OpenAI API key.
 
 ### Example: gpt-3.5-turbo, first 16 GAIA tasks, 8 docker containers
