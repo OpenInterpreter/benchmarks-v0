@@ -59,7 +59,7 @@ if __name__ == "__main__":
     command = commands[args.command]
     
     if args.nworkers is None:
-        results = run_benchmark_threaded_pool(b, command, DockerBenchmarkRunner(), args.ntasks)
+        results = run_benchmark_threaded_pool(b, command, DockerBenchmarkRunner())
     else:
         print("number of workers:", args.nworkers)
         results = run_benchmark_threaded_pool(b, command, DockerBenchmarkRunner(), args.nworkers)

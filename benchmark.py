@@ -85,8 +85,11 @@ class DockerBenchmarkRunner(BenchmarkRunner):
                 DockerBenchmarkRunner.WORKER_NAME,
                 command_json_str, f"{shlex.quote(prompt)}", temp_dir
             ]
-            print(" ".join(dcmd))
-            subprocess.run(dcmd)
+            subprocess.run(dcmd, stdout=subprocess.DEVNULL)
+            messages_path = Path(temp_dir) / worker.OUTPUT_PATH
+            if not messages_path.exists():
+                # this will happen if (for example) the container is stopped before it finishes.
+                return []
             with open(Path(temp_dir) / worker.OUTPUT_PATH) as f:
                 messages = json.load(f)
                 return messages
