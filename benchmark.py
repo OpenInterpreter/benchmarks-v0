@@ -17,7 +17,6 @@ from datetime import datetime
 from typing import Callable, Dict, Generic, List, Literal, NotRequired, Optional, Tuple, TypeVar, TypedDict, cast
 
 import worker
-from interpreter import OpenInterpreter
 
 
 logger = logging.getLogger(__name__)
@@ -79,7 +78,6 @@ class DockerBenchmarkRunner(BenchmarkRunner):
 
     def run(self, command: OpenInterpreterCommand, prompt: str, display: bool) -> List[LMC]:
         with tempfile.TemporaryDirectory() as temp_dir:
-            # with self.temp_docker_volume() as volume_name:
             command_json_str = json.dumps(command)
             dcmd = [
                 "docker", "run", "-t",
@@ -92,13 +90,6 @@ class DockerBenchmarkRunner(BenchmarkRunner):
             with open(Path(temp_dir) / worker.OUTPUT_PATH) as f:
                 messages = json.load(f)
                 return messages
-    
-    @contextmanager
-    def temp_docker_volume(self):
-        result = subprocess.run(["docker", "volume", "create"], stdout=subprocess.PIPE, text=True)
-        volume_name = result.stdout.strip()
-        yield volume_name
-        subprocess.run(["docker", "volume", "rm", volume_name], stdout=subprocess.DEVNULL)
     
 
 def run_benchmark(benchmark: Benchmark, command: OpenInterpreterCommand, display: bool = False) -> List[TaskResult]:
