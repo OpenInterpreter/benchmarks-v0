@@ -54,3 +54,6 @@ python run_benchmarks.py \
 
 - `ModuleNotFoundError: No module named '_lzma'` when running example.
     - If you're using `pyenv` to manage python versions, [this stackoverflow post](https://stackoverflow.com/questions/59690698/modulenotfounderror-no-module-named-lzma-when-building-python-using-pyenv-on) might help.
+- `ModuleNotFoundError: No module named 'pkg_resources'` when running example.
+    - Refer to [this stackoverflow post](https://stackoverflow.com/questions/7446187/no-module-named-pkg-resources) for now.
+    - OpenInterpreter should probably include `setuptools` in its list of dependencies, or should switch to another module that's in python's standard library.
