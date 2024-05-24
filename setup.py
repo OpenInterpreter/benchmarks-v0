@@ -4,7 +4,7 @@ import shutil
 from pathlib import Path
 
 
-color = lambda c: lambda s: f"\\033[{c}m{s}\\033[0m"
+color = lambda c: lambda s: f"\033[{c}m{s}\033[0m"
 red = color(91)
 green = color(92)
 
