@@ -58,39 +58,46 @@ class TaskResult(TypedDict):
 @dataclass
 class Benchmark(Generic[Task]):
     get_tasks: Callable[[], List[Task]]
+    setup_input_dir: Callable[[Task, Path], None]
     task_to_id_prompt: Callable[[Task], ZeroShotTask]
     task_result_status: Callable[[Task, List[LMC]], ResultStatus]
 
 
 class BenchmarkRunner(ABC):
     @abstractmethod
-    def run(self, command: OpenInterpreterCommand, prompt: str, display: bool) -> List[LMC]:
+    def run(self, setup: Callable[[Path], None], command: OpenInterpreterCommand, prompt: str, display: bool) -> List[LMC]:
         ...
 
 
 class DefaultBenchmarkRunner(BenchmarkRunner):
-    def run(self, command: OpenInterpreterCommand, prompt: str, display: bool) -> List[LMC]:
+    def run(self, setup: Callable[[Path], None], command: OpenInterpreterCommand, prompt: str, display: bool) -> List[LMC]:
         return worker.run(command, prompt, display) # type: ignore
 
 
 class DockerBenchmarkRunner(BenchmarkRunner):
     WORKER_NAME = "worker"
 
-    def run(self, command: OpenInterpreterCommand, prompt: str, display: bool) -> List[LMC]:
+    def run(self, setup: Callable[[Path], None], command: OpenInterpreterCommand, prompt: str, display: bool) -> List[LMC]:
         with tempfile.TemporaryDirectory() as temp_dir:
+            output_dir = Path(temp_dir) / Path("output")
+            input_dir = Path(temp_dir) / Path("input")
             command_json_str = json.dumps(command)
+            input_dir.mkdir(parents=True)
+            output_dir.mkdir(parents=True)
+            setup(Path(input_dir))
             dcmd = [
                 "docker", "run", "-t",
-                "-v", f"{temp_dir}:{temp_dir}",
+                "-v", f"{input_dir}:/input", "-v", f"{output_dir}:/output",
                 DockerBenchmarkRunner.WORKER_NAME,
-                command_json_str, f"{shlex.quote(prompt)}", temp_dir
+                command_json_str, f"{shlex.quote(prompt)}", output_dir
             ]
             subprocess.run(dcmd, stdout=subprocess.DEVNULL)
             messages_path = Path(temp_dir) / worker.OUTPUT_PATH
             if not messages_path.exists():
                 # this will happen if (for example) the container is stopped before it finishes.
+                logger.debug(f"couldn't find {messages_path}!")
                 return []
-            with open(Path(temp_dir) / worker.OUTPUT_PATH) as f:
+            with open(messages_path) as f:
                 messages = json.load(f)
                 return messages
     
@@ -107,7 +114,7 @@ def run_benchmark(benchmark: Benchmark, command: OpenInterpreterCommand, display
 
         logger.debug(f"  Running task {zstask['id']}...")
         start = datetime.now()
-        messages  = runner.run(command, zstask["prompt"], display=display)
+        messages  = runner.run(lambda p: benchmark.setup_input_dir(task, p), command, zstask["prompt"], display=display)
         end = datetime.now()
 
         status = benchmark.task_result_status(task, messages)
@@ -137,7 +144,7 @@ def run_benchmark_threaded_pool(benchmark: Benchmark[Task], command: OpenInterpr
         logger.debug(f"  task {zstask['id']}: RUNNING...")
         start = datetime.now()
         try:
-            messages = runner.run(command, zstask["prompt"], display=display)
+            messages = runner.run(lambda p: benchmark.setup_input_dir(task, p), command, zstask["prompt"], display=display)
             status = benchmark.task_result_status(task, messages)
         except Exception as e:
             logger.debug(f"  task {zstask['id']}: EXCEPTION!")
@@ -185,7 +192,7 @@ def run_benchmark_threaded(benchmark: Benchmark[Task], command: OpenInterpreterC
             zstask = benchmark.task_to_id_prompt(task)
             logger.debug(f"  task {zstask['id']} on thread {thread_id}: RUNNING...")
             start = datetime.now()
-            messages = runner.run(command, zstask["prompt"], display=display)
+            messages = runner.run(lambda p: benchmark.setup_input_dir(task, p), command, zstask["prompt"], display=display)
             end = datetime.now()
             status = benchmark.task_result_status(task, messages)
             logger.debug(f"  task {zstask['id']} on thread {thread_id}: DONE!")

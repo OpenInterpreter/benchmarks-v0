@@ -43,7 +43,7 @@ if __name__ == "__main__":
     print("prompt:", prompt)
 
     # running!
-    full_output_path = out_dir / OUTPUT_PATH
+    full_output_path = OUTPUT_PATH
     messages = run(command_config_as_json, prompt, True)
     if not full_output_path.parent.exists():
         os.makedirs(full_output_path.parent)
