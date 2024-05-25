@@ -21,8 +21,7 @@ GAIATask = TypedDict("GAIATask", {
 def benchmark(first_n: Optional[int] = None) -> Benchmark[GAIATask]:
     def get_tasks() -> List[GAIATask]:
         ds = load_dataset("./.datasets/GAIA", "2023_all", split="validation", data_dir="./datasets", trust_remote_code=True)
-        as_list = cast(List[GAIATask], list(ds))
-        tasks = [t for t in as_list if t["file_path"] != ""]
+        tasks = cast(List[GAIATask], list(ds))
         n_tasks = first_n or len(tasks)
         return tasks[:n_tasks]
         
