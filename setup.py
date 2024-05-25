@@ -8,13 +8,13 @@ downloads are NOT committed to this repository.
 """
 
 
-color = lambda c: lambda s: f"\\033[{c}m{s}\\033[0m"
+color = lambda c: lambda s: f"\033[{c}m{s}\033[0m"
 red = color(91)
 green = color(92)
 
 
 def run_cmd(cmd: str):
-    subprocess.run(cmd.split(" "), stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    subprocess.run(cmd.split(" "), check=True)
 
 
 print(green("logging into huggingface"))
