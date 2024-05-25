@@ -26,6 +26,8 @@ def benchmark(first_n: Optional[int] = None) -> Benchmark[GAIATask]:
         return tasks[:n_tasks]
         
     def setup_input_dir(task: GAIATask, dir_path: Path):
+        if task["file_path"] == "":
+            return
         src_file_path = Path(task["file_path"])
         dst_file_path = dir_path / Path(task["file_name"])
         shutil.copyfile(src_file_path, dst_file_path)
