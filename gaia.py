@@ -1,4 +1,6 @@
+from pathlib import Path
 import re
+import shutil
 from typing import Dict, List, Optional, TypedDict, cast
 from datasets import load_dataset
 
@@ -18,15 +20,19 @@ GAIATask = TypedDict("GAIATask", {
 
 def benchmark(first_n: Optional[int] = None) -> Benchmark[GAIATask]:
     def get_tasks() -> List[GAIATask]:
-        ds = load_dataset("gaia-benchmark/GAIA", "2023_all", split="validation")
+        ds = load_dataset("./.datasets/GAIA", "2023_all", split="validation", data_dir="./datasets", trust_remote_code=True)
         as_list = cast(List[GAIATask], list(ds))
-        if first_n is not None:
-            return as_list[:first_n]
-        else:
-            return as_list
+        tasks = [t for t in as_list if t["file_path"] != "" and t["Level"] == "1"]
+        n_tasks = first_n or len(tasks)
+        return tasks[:n_tasks]
+        
+    def setup_input_dir(task: GAIATask, dir_path: Path):
+        src_file_path = Path(task["file_path"])
+        dst_file_path = dir_path / Path(task["file_name"])
+        shutil.copyfile(src_file_path, dst_file_path)
     
     def task_to_id_prompt(task: GAIATask) -> ZeroShotTask:
-        file_path = f"files/{task['file_name']}"
+        file_path = f"input/{task['file_name']}"
         prompt = task["Question"] if task["file_name"] == "" else f"file_path: {file_path}\n{task['Question']}"
         return {"id": task["task_id"], "prompt": prompt}
     
@@ -53,6 +59,7 @@ def benchmark(first_n: Optional[int] = None) -> Benchmark[GAIATask]:
 
     return Benchmark(
         get_tasks,
+        setup_input_dir,
         task_to_id_prompt,
         task_result_status
     )

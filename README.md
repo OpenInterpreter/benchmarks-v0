@@ -18,14 +18,8 @@ git clone https://github.com/imapersonman/oi-benchmarks.git \
   && python -m venv .venv \
   && source .venv/bin/activate \
   && python -m pip install -r requirements.txt \
-  && docker build -t worker .
-```
-
-3. Use your [Huggingface Access Token](https://huggingface.co/docs/hub/en/security-tokens) to login using the `huggingface-cli`.
-    - This is only necessary if you're running huggingface-hosted benchmarks, like GAIA.  If you want to run non-huggingface-hosted benchmarks, or if our AI overlords have succesfully ushered us into a post-access token utopia, please disregard this step.
-
-```bash
-huggingface-cli login
+  && docker build -t worker . \
+  && python setup.py
 ```
 
 ## Running Benchmarks

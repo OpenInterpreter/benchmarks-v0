@@ -4,7 +4,7 @@ from typing import Any, Dict, List, cast
 from interpreter import OpenInterpreter
 
 
-OUTPUT_PATH = Path("messages.json")
+OUTPUT_PATH = Path("output/messages.json")
 
 
 def command_to_interpreter(cmd: Dict[str, Any]) -> OpenInterpreter:
