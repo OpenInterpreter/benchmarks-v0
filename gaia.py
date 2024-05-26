@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, TypedDict, cast
 from datasets import load_dataset
 
 from benchmark import Benchmark, ResultStatus, ZeroShotTask
+from constants import DATASETS, GAIA
 
 
 GAIATask = TypedDict("GAIATask", {
@@ -20,7 +21,7 @@ GAIATask = TypedDict("GAIATask", {
 
 def benchmark(first_n: Optional[int] = None) -> Benchmark[GAIATask]:
     def get_tasks() -> List[GAIATask]:
-        ds = load_dataset("./.datasets/GAIA", "2023_all", split="validation", data_dir="./datasets", trust_remote_code=True)
+        ds = load_dataset(str(GAIA), "2023_all", split="validation", data_dir=str(DATASETS), trust_remote_code=True)
         tasks = cast(List[GAIATask], list(ds))
         n_tasks = first_n or len(tasks)
         return tasks[:n_tasks]

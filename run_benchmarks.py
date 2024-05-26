@@ -1,6 +1,8 @@
 import io
 import csv
 import argparse
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import List, Optional
 
 import gaia
@@ -8,9 +10,11 @@ from benchmark import DockerBenchmarkRunner, TaskResult, run_benchmark_threaded_
 from commands import commands
 
 
-def save_results(results: List[TaskResult], filepath: str = "output.csv"):
+def save_results(results: List[TaskResult], filepath: Path):
     if len(results) > 0:
         f = io.StringIO("")
+        if not filepath.parent.exists():
+            filepath.parent.mkdir(parents=True)
         with io.StringIO("") as f:
             writer = csv.DictWriter(f, results[0].keys())
             writer.writeheader()
@@ -18,6 +22,10 @@ def save_results(results: List[TaskResult], filepath: str = "output.csv"):
             with open(filepath, "w") as csv_file:
                 v = f.getvalue()
                 csv_file.write(v)
+
+
+def dt_to_str(dt: datetime) -> str:
+    return dt.strftime("%Y-%m-%dT%H-%M-%SZ")
 
 
 class ArgumentsNamespace(argparse.Namespace):
@@ -30,12 +38,11 @@ class ArgumentsNamespace(argparse.Namespace):
 
 if __name__ == "__main__":
     default_command_id = "gpt35turbo"
-    default_output_filepath = "output.csv"
+    default_output_file_dir = Path(".local/results")
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-l", "--list", action="store_true")
     parser.add_argument("-c", "--command", action="store", type=str, default=default_command_id)
-    parser.add_argument("-o", "--output", action="store", type=str, default=default_output_filepath)
     parser.add_argument("-nt", "--ntasks", action="store", type=int)
     parser.add_argument("-nw", "--nworkers", action="store", type=int)
     args = parser.parse_args(namespace=ArgumentsNamespace())
@@ -48,7 +55,9 @@ if __name__ == "__main__":
         exit(1)
     
     print("command configuration:", args.command)
-    print("output file:", args.output)
+    now_utc = datetime.now(timezone.utc)
+    save_path = default_output_file_dir / Path(f"{args.command}-{dt_to_str(now_utc)}.csv")
+    print("output file:", save_path)
 
     if args.ntasks is None:
         b = gaia.benchmark()
@@ -64,4 +73,4 @@ if __name__ == "__main__":
         print("number of workers:", args.nworkers)
         results = run_benchmark_threaded_pool(b, command, DockerBenchmarkRunner(), args.nworkers)
 
-    save_results(results, args.output)
+    save_results(results, save_path)

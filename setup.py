@@ -1,6 +1,8 @@
 import subprocess
 from pathlib import Path
 
+from constants import DATASETS, GAIA
+
 
 """
 This script is responsible for downloading benchmarks.  It's imperative that the files this script
@@ -20,11 +22,11 @@ def run_cmd(cmd: str):
 print(green("logging into huggingface"))
 run_cmd("huggingface-cli login")
 
-datasets = Path(".datasets")
-if not datasets.exists():
-    print(green("creating .datasets directory"))
-    datasets.mkdir(parents=True)
 
-if not Path(".datasets/GAIA").exists():
+if not DATASETS.exists():
+    print(green(f"creating datasets directory at {DATASETS}"))
+    DATASETS.mkdir(parents=True)
+
+if not GAIA.exists():
     print(green("downloading gaia"))
-    run_cmd("git clone https://huggingface.co/datasets/gaia-benchmark/GAIA .datasets/GAIA")
+    run_cmd(f"git clone https://huggingface.co/datasets/gaia-benchmark/GAIA {GAIA}")
