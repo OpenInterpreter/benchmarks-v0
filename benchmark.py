@@ -78,12 +78,6 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
             input_dir.mkdir(parents=True)
             worker_fs = LocalBasedFS(str(input_dir))
             setup(worker_fs)
-            print("WORKER DIRS:")
-            import os
-            print(os.listdir(worker_dir))
-            print(os.listdir(input_dir))
-            print(worker_fs.ls(""))
-            print()
             with change_working_dir(worker_dir):
                 return worker.run(command, prompt) # type: ignore
 
