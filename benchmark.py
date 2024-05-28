@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import subprocess
 import sys
 import tempfile
@@ -77,6 +78,7 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
             input_dir = Path(worker_dir) / Path("input")
             input_dir.mkdir(parents=True, exist_ok=True)
             setup(LocalBasedFS(str(input_dir)))
+            print("WORKING DIRL:", os.getcwd())
             with change_working_dir(worker_dir):
                 result = worker.run(command, prompt) # type: ignore
             return result
