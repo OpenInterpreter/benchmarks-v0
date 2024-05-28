@@ -73,10 +73,11 @@ class BenchmarkRunner(ABC):
 
 class DefaultBenchmarkRunner(BenchmarkRunner):
     def run(self, setup: Callable[[AbstractFileSystem], None], command: OpenInterpreterCommand, prompt: str) -> List[LMC]:
-        worker_path = LOCAL / Path("worker")
-        worker_fs = LocalBasedFS(str(worker_path))
-        setup(worker_fs)
-        return worker.run(command, prompt) # type: ignore
+        with tempfile.TemporaryDirectory() as worker_dir:
+            input_dir = Path(worker_dir) / "input"
+            worker_fs = LocalBasedFS(str(input_dir))
+            setup(worker_fs)
+            return worker.run(command, prompt) # type: ignore
 
 
 class DockerBenchmarkRunner(BenchmarkRunner):
