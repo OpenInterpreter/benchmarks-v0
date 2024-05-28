@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-import gaia
-from benchmark import DefaultBenchmarkRunner, DockerBenchmarkRunner, TaskResult, run_benchmark_threaded_pool
+from gaia import GAIABenchmark
+from benchmark import DefaultBenchmarkRunner, DockerBenchmarkRunner, TaskResult, run_benchmark_worker_pool
 from commands import commands
 
 
@@ -62,20 +62,20 @@ if __name__ == "__main__":
     print("output file:", save_path)
 
     if args.ntasks is None:
-        b = gaia.benchmark()
+        b = GAIABenchmark()
     else:
         print("number of tasks:", args.ntasks)
-        b = gaia.benchmark(args.ntasks, args.task_offset, [
-            lambda t: t["file_name"] != ""
+        b = GAIABenchmark(args.ntasks, args.task_offset, [
+            # lambda t: t["file_name"] != ""
         ])
     
     command = commands[args.command]
-    runner = DefaultBenchmarkRunner()
+    runner = DockerBenchmarkRunner()
     
     if args.nworkers is None:
-        results = run_benchmark_threaded_pool(b, command, runner)
+        results = run_benchmark_worker_pool(b, command, runner)
     else:
         print("number of workers:", args.nworkers)
-        results = run_benchmark_threaded_pool(b, command, runner, args.nworkers)
+        results = run_benchmark_worker_pool(b, command, runner, args.nworkers)
 
     save_results(results, save_path)
