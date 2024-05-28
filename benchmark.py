@@ -76,8 +76,7 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
         with tempfile.TemporaryDirectory() as worker_dir:
             input_dir = Path(worker_dir) / Path("input")
             input_dir.mkdir(parents=True)
-            worker_fs = LocalBasedFS(str(input_dir))
-            setup(worker_fs)
+            setup(LocalBasedFS(str(input_dir)))
             with change_working_dir(worker_dir):
                 return worker.run(command, prompt) # type: ignore
 
