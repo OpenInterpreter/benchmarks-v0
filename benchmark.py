@@ -16,6 +16,7 @@ from datetime import datetime
 from typing import Callable, Dict, Generic, List, Literal, NotRequired, Optional, Tuple, TypeVar, TypedDict, cast
 from fsspec import AbstractFileSystem
 
+from constants import LOCAL
 from utils import LocalBasedFS
 import worker
 
@@ -72,6 +73,9 @@ class BenchmarkRunner(ABC):
 
 class DefaultBenchmarkRunner(BenchmarkRunner):
     def run(self, setup: Callable[[AbstractFileSystem], None], command: OpenInterpreterCommand, prompt: str) -> List[LMC]:
+        worker_path = LOCAL / Path("worker")
+        worker_fs = LocalBasedFS(str(worker_path))
+        setup(worker_fs)
         return worker.run(command, prompt) # type: ignore
 
 
