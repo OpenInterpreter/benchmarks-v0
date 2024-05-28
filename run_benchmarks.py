@@ -63,7 +63,9 @@ if __name__ == "__main__":
         b = gaia.benchmark()
     else:
         print("number of tasks:", args.ntasks)
-        b = gaia.benchmark(args.ntasks)
+        b = gaia.benchmark(args.ntasks, [
+            lambda t: t["file_name"] != ""
+        ])
     
     command = commands[args.command]
     runner = DefaultBenchmarkRunner()
