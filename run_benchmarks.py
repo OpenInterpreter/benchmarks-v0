@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import gaia
-from benchmark import DockerBenchmarkRunner, TaskResult, run_benchmark_threaded_pool
+from benchmark import DefaultBenchmarkRunner, DockerBenchmarkRunner, TaskResult, run_benchmark_threaded_pool
 from commands import commands
 
 
@@ -66,11 +66,12 @@ if __name__ == "__main__":
         b = gaia.benchmark(args.ntasks)
     
     command = commands[args.command]
+    runner = DefaultBenchmarkRunner()
     
     if args.nworkers is None:
-        results = run_benchmark_threaded_pool(b, command, DockerBenchmarkRunner())
+        results = run_benchmark_threaded_pool(b, command, runner)
     else:
         print("number of workers:", args.nworkers)
-        results = run_benchmark_threaded_pool(b, command, DockerBenchmarkRunner(), args.nworkers)
+        results = run_benchmark_threaded_pool(b, command, runner, args.nworkers)
 
     save_results(results, save_path)
