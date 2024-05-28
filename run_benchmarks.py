@@ -33,6 +33,7 @@ class ArgumentsNamespace(argparse.Namespace):
     command: str
     output: str
     ntasks: Optional[int]
+    task_offset: int
     nworkers: Optional[int]
 
 
@@ -45,6 +46,7 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--command", action="store", type=str, default=default_command_id)
     parser.add_argument("-nt", "--ntasks", action="store", type=int)
     parser.add_argument("-nw", "--nworkers", action="store", type=int)
+    parser.add_argument("-to", "--task-offset", action="store", type=int, default=0)
     args = parser.parse_args(namespace=ArgumentsNamespace())
 
     if args.list:
@@ -63,7 +65,7 @@ if __name__ == "__main__":
         b = gaia.benchmark()
     else:
         print("number of tasks:", args.ntasks)
-        b = gaia.benchmark(args.ntasks, [
+        b = gaia.benchmark(args.ntasks, args.task_offset, [
             lambda t: t["file_name"] != ""
         ])
     

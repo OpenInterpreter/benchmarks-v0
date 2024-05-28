@@ -5,7 +5,7 @@ from fsspec import AbstractFileSystem, filesystem
 
 from benchmark import Benchmark, ResultStatus, ZeroShotTask
 from constants import DATASETS, GAIA
-from utils import copy_between_fss
+from utils import copy_between_fss, wrapping_offset
 
 
 GAIATask = TypedDict("GAIATask", {
@@ -19,12 +19,12 @@ GAIATask = TypedDict("GAIATask", {
 })
 
 
-def benchmark(first_n: Optional[int] = None, predicates: List[Callable[[GAIATask], bool]] = []) -> Benchmark[GAIATask]:
+def benchmark(first_n: Optional[int] = None, offset: int = 0, predicates: List[Callable[[GAIATask], bool]] = []) -> Benchmark[GAIATask]:
     def get_tasks() -> List[GAIATask]:
         ds = load_dataset(str(GAIA), "2023_all", split="validation", data_dir=str(DATASETS), trust_remote_code=True)
         tasks = cast(List[GAIATask], list(ds))
         n_tasks = first_n or len(tasks)
-        return [t for t in tasks if all(p(t) for p in predicates)][:n_tasks]
+        return wrapping_offset([t for t in tasks if all(p(t) for p in predicates)], offset, n_tasks)
         
     def setup_input_dir(task: GAIATask, fs: AbstractFileSystem):
         if task["file_path"] == "":
