@@ -1,3 +1,6 @@
+from contextlib import contextmanager
+import os
+from pathlib import Path
 from typing import Any
 from fsspec import AbstractFileSystem, filesystem
 
@@ -22,3 +25,11 @@ def copy_between_fss(src_fs: AbstractFileSystem, src_path: str, dst_fs: Abstract
         with dst_fs.open(dst_path, "wb") as dst_f:
             src = src_f.read()
             dst_f.write(src)  # type: ignore
+
+
+@contextmanager
+def change_working_dir(new_wd: Path | str):
+    old_wd = os.getcwd()
+    os.chdir(new_wd)
+    yield
+    os.chdir(old_wd)

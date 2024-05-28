@@ -17,7 +17,7 @@ from typing import Callable, Dict, Generic, List, Literal, NotRequired, Optional
 from fsspec import AbstractFileSystem
 
 from constants import LOCAL
-from utils import LocalBasedFS
+from utils import LocalBasedFS, change_working_dir
 import worker
 
 
@@ -84,7 +84,8 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
             print(os.listdir(input_dir))
             print(worker_fs.ls(""))
             print()
-            return worker.run(command, prompt) # type: ignore
+            with change_working_dir(worker_dir):
+                return worker.run(command, prompt) # type: ignore
 
 
 class DockerBenchmarkRunner(BenchmarkRunner):
