@@ -12,6 +12,9 @@ class LocalBasedFS(AbstractFileSystem):
     
     def open(self, path: str, mode: str = 'r', **kwargs: Any) -> Any:
         return self.fs.open(self._full_path(path), mode=mode, **kwargs)
+    
+    def ls(self, path='', detail=True, **kwargs):
+        return self.fs.ls(self._full_path(path), detail=detail, **kwargs)
 
 
 def copy_between_fss(src_fs: AbstractFileSystem, src_path: str, dst_fs: AbstractFileSystem, dst_path: str):
