@@ -81,7 +81,7 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
             print("WORKER DIRS:")
             import os
             print(os.listdir(worker_dir))
-            print(worker_fs.ls(str(input_dir)))
+            print(worker_fs.ls("input"))
             print()
             return worker.run(command, prompt) # type: ignore
 
