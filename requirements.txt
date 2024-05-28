@@ -1,3 +1,4 @@
 datasets
 jsonschema
 open-interpreter
+fsspec

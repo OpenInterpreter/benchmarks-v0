@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-import gaia
-from benchmark import DockerBenchmarkRunner, TaskResult, run_benchmark_threaded_pool
+from gaia import GAIABenchmark
+from benchmark import DefaultBenchmarkRunner, DockerBenchmarkRunner, TaskResult, run_benchmark_worker_pool
 from commands import commands
 
 
@@ -14,7 +14,7 @@ def save_results(results: List[TaskResult], filepath: Path):
     if len(results) > 0:
         f = io.StringIO("")
         if not filepath.parent.exists():
-            filepath.parent.mkdir(parents=True)
+            filepath.parent.mkdir(parents=True, exist_ok=True)
         with io.StringIO("") as f:
             writer = csv.DictWriter(f, results[0].keys())
             writer.writeheader()
@@ -33,6 +33,7 @@ class ArgumentsNamespace(argparse.Namespace):
     command: str
     output: str
     ntasks: Optional[int]
+    task_offset: int
     nworkers: Optional[int]
 
 
@@ -45,6 +46,7 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--command", action="store", type=str, default=default_command_id)
     parser.add_argument("-nt", "--ntasks", action="store", type=int)
     parser.add_argument("-nw", "--nworkers", action="store", type=int)
+    parser.add_argument("-to", "--task-offset", action="store", type=int, default=0)
     args = parser.parse_args(namespace=ArgumentsNamespace())
 
     if args.list:
@@ -56,21 +58,24 @@ if __name__ == "__main__":
     
     print("command configuration:", args.command)
     now_utc = datetime.now(timezone.utc)
-    save_path = default_output_file_dir / Path(f"{args.command}-{dt_to_str(now_utc)}.csv")
+    save_path = default_output_file_dir / Path(f"{dt_to_str(now_utc)}-{args.command}.csv")
     print("output file:", save_path)
 
     if args.ntasks is None:
-        b = gaia.benchmark()
+        b = GAIABenchmark()
     else:
         print("number of tasks:", args.ntasks)
-        b = gaia.benchmark(args.ntasks)
+        b = GAIABenchmark(args.ntasks, args.task_offset, [
+            # lambda t: t["file_name"] != ""
+        ])
     
     command = commands[args.command]
+    runner = DockerBenchmarkRunner()
     
     if args.nworkers is None:
-        results = run_benchmark_threaded_pool(b, command, DockerBenchmarkRunner())
+        results = run_benchmark_worker_pool(b, command, runner)
     else:
         print("number of workers:", args.nworkers)
-        results = run_benchmark_threaded_pool(b, command, DockerBenchmarkRunner(), args.nworkers)
+        results = run_benchmark_worker_pool(b, command, runner, args.nworkers)
 
     save_results(results, save_path)

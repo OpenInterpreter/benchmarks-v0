@@ -1,11 +1,12 @@
-from pathlib import Path
+from dataclasses import dataclass
 import re
-import shutil
-from typing import Dict, List, Optional, TypedDict, cast
+from typing import Callable, Dict, List, Optional, TypedDict, cast
 from datasets import load_dataset
+from fsspec import AbstractFileSystem, filesystem
 
-from benchmark import Benchmark, ResultStatus, ZeroShotTask
+from benchmark import Benchmark, LoadedTask, ResultStatus, TaskResult, ZeroShotTask
 from constants import DATASETS, GAIA
+from utils import copy_between_fss, wrapping_offset
 
 
 GAIATask = TypedDict("GAIATask", {
@@ -19,26 +20,22 @@ GAIATask = TypedDict("GAIATask", {
 })
 
 
-def benchmark(first_n: Optional[int] = None) -> Benchmark[GAIATask]:
-    def get_tasks() -> List[GAIATask]:
-        ds = load_dataset(str(GAIA), "2023_all", split="validation", data_dir=str(DATASETS), trust_remote_code=True)
-        tasks = cast(List[GAIATask], list(ds))
-        n_tasks = first_n or len(tasks)
-        return tasks[:n_tasks]
-        
-    def setup_input_dir(task: GAIATask, dir_path: Path):
-        if task["file_path"] == "":
+@dataclass
+class LoadedGAIATask(LoadedTask[GAIATask]):
+    task: GAIATask
+
+    def setup_input_dir(self, fs: AbstractFileSystem):
+        if self.task["file_path"] == "":
             return
-        src_file_path = Path(task["file_path"])
-        dst_file_path = dir_path / Path(task["file_name"])
-        shutil.copyfile(src_file_path, dst_file_path)
+        local_fs = filesystem("file")
+        copy_between_fss(local_fs, self.task["file_path"], fs, self.task["file_name"])
     
-    def task_to_id_prompt(task: GAIATask) -> ZeroShotTask:
-        file_path = f"input/{task['file_name']}"
-        prompt = task["Question"] if task["file_name"] == "" else f"file_path: {file_path}\n{task['Question']}"
-        return {"id": task["task_id"], "prompt": prompt}
+    def to_zero_shot(self) -> ZeroShotTask:
+        file_path = f"input/{self.task['file_name']}"
+        prompt = self.task["Question"] if self.task["file_name"] == "" else f"file_path: {file_path}\n{self.task['Question']}"
+        return {"id": self.task["task_id"], "prompt": prompt}
     
-    def task_result_status(task: GAIATask, messages: List[Dict[str, str]]) -> ResultStatus:
+    def to_result_status(self, messages: List[Dict[str, str]]) -> ResultStatus:
         if len(messages) == 0:
             return "unknown"
         final_message = messages[-1]
@@ -52,16 +49,25 @@ def benchmark(first_n: Optional[int] = None) -> Benchmark[GAIATask]:
         if final_answer_re is None:
             return "unknown"
 
-        expected = task["Final answer"]
+        expected = self.task["Final answer"]
         actual = final_answer_re.group(1).strip()
         if actual.lower() != expected.lower():
             return "incorrect"
         else:
             return "correct"
 
-    return Benchmark(
-        get_tasks,
-        setup_input_dir,
-        task_to_id_prompt,
-        task_result_status
-    )
+
+class GAIABenchmark(Benchmark[GAIATask]):
+    def __init__(self, first_n: Optional[int] = None, offset: int = 0, predicates: List[Callable[[GAIATask], bool]] = []):
+        self.first_n = first_n
+        self.offset = offset
+        self.predicates = predicates
+
+    def get_tasks(self) -> List[GAIATask]:
+        ds = load_dataset(str(GAIA), "2023_all", split="validation", data_dir=str(DATASETS), trust_remote_code=True)
+        tasks = cast(List[GAIATask], list(ds))
+        n_tasks = self.first_n or len(tasks)
+        return wrapping_offset([t for t in tasks if all(p(t) for p in self.predicates)], self.offset, n_tasks)
+        
+    def load_task(self, task: GAIATask) -> LoadedTask[GAIATask]:
+        return LoadedGAIATask(task)

@@ -19,11 +19,12 @@ def command_to_interpreter(cmd: Dict[str, Any]) -> OpenInterpreter:
     return interpreter
 
 
-def run(command: Dict[str, Any], prompt: str, display: bool) -> List[Dict[str, str]]:
+def run(command: Dict[str, Any], prompt: str) -> List[Dict[str, str]]:
+    assert Path("input").exists(), "input folder doesn't exist!"
     interpreter = command_to_interpreter(command)
 
     try:
-        output = cast(List, interpreter.chat(prompt, display=display, stream=False))
+        output = cast(List, interpreter.chat(prompt, display=True, stream=False))
     except KeyboardInterrupt:
         output = [*interpreter.messages, { "role": "error", "content": "KeyboardInterrupt" }]
     except Exception as e:
