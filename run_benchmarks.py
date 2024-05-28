@@ -14,7 +14,7 @@ def save_results(results: List[TaskResult], filepath: Path):
     if len(results) > 0:
         f = io.StringIO("")
         if not filepath.parent.exists():
-            filepath.parent.mkdir(parents=True)
+            filepath.parent.mkdir(parents=True, exist_ok=True)
         with io.StringIO("") as f:
             writer = csv.DictWriter(f, results[0].keys())
             writer.writeheader()

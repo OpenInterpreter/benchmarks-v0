@@ -25,7 +25,7 @@ run_cmd("huggingface-cli login")
 
 if not DATASETS.exists():
     print(green(f"creating datasets directory at {DATASETS}"))
-    DATASETS.mkdir(parents=True)
+    DATASETS.mkdir(parents=True, exist_ok=True)
 
 if not GAIA.exists():
     print(green("downloading gaia"))

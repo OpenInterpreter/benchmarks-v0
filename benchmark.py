@@ -75,7 +75,7 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
     def run(self, setup: Callable[[AbstractFileSystem], None], command: OpenInterpreterCommand, prompt: str) -> List[LMC]:
         with tempfile.TemporaryDirectory() as worker_dir:
             input_dir = Path(worker_dir) / Path("input")
-            input_dir.mkdir(parents=True)
+            input_dir.mkdir(parents=True, exist_ok=True)
             setup(LocalBasedFS(str(input_dir)))
             with change_working_dir(worker_dir):
                 return worker.run(command, prompt) # type: ignore
@@ -89,8 +89,8 @@ class DockerBenchmarkRunner(BenchmarkRunner):
             output_dir = Path(temp_dir) / Path("output")
             input_dir = Path(temp_dir) / Path("input")
             command_json_str = json.dumps(command)
-            input_dir.mkdir(parents=True)
-            output_dir.mkdir(parents=True)
+            input_dir.mkdir(parents=True, exist_ok=True)
+            output_dir.mkdir(parents=True, exist_ok=True)
             setup(LocalBasedFS(str(input_dir)))
             dcmd = [
                 "docker", "run", "-t",
