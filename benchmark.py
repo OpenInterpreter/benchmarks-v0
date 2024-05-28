@@ -75,6 +75,7 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
     def run(self, setup: Callable[[AbstractFileSystem], None], command: OpenInterpreterCommand, prompt: str) -> List[LMC]:
         with tempfile.TemporaryDirectory() as worker_dir:
             input_dir = Path(worker_dir) / "input"
+            input_dir.mkdir(parents=True)
             worker_fs = LocalBasedFS(str(input_dir))
             setup(worker_fs)
             return worker.run(command, prompt) # type: ignore
