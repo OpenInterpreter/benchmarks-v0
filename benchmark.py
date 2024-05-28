@@ -78,7 +78,8 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
             input_dir.mkdir(parents=True, exist_ok=True)
             setup(LocalBasedFS(str(input_dir)))
             with change_working_dir(worker_dir):
-                return worker.run(command, prompt) # type: ignore
+                result = worker.run(command, prompt) # type: ignore
+            return result
 
 
 class DockerBenchmarkRunner(BenchmarkRunner):
