@@ -44,7 +44,7 @@ if __name__ == "__main__":
 
     # running!
     full_output_path = OUTPUT_PATH
-    messages = run(command_config_as_json, prompt, True)
+    messages = run(command_config_as_json, prompt)
     if not full_output_path.parent.exists():
         os.makedirs(full_output_path.parent)
     with open(full_output_path, "w+") as f:
