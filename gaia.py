@@ -24,7 +24,7 @@ def benchmark(first_n: Optional[int] = None, predicates: List[Callable[[GAIATask
         ds = load_dataset(str(GAIA), "2023_all", split="validation", data_dir=str(DATASETS), trust_remote_code=True)
         tasks = cast(List[GAIATask], list(ds))
         n_tasks = first_n or len(tasks)
-        return [t for t in tasks[:n_tasks] if all(p(t) for p in predicates)]
+        return [t for t in tasks if all(p(t) for p in predicates)][:n_tasks]
         
     def setup_input_dir(task: GAIATask, fs: AbstractFileSystem):
         if task["file_path"] == "":
