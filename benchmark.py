@@ -6,7 +6,6 @@ import tempfile
 import traceback
 import uuid
 import shlex
-from contextlib import contextmanager
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -15,7 +14,9 @@ from threading import Thread
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Callable, Dict, Generic, List, Literal, NotRequired, Optional, Tuple, TypeVar, TypedDict, cast
+from fsspec import AbstractFileSystem
 
+from utils import LocalBasedFS
 import worker
 
 
@@ -58,33 +59,33 @@ class TaskResult(TypedDict):
 @dataclass
 class Benchmark(Generic[Task]):
     get_tasks: Callable[[], List[Task]]
-    setup_input_dir: Callable[[Task, Path], None]
+    setup_input_dir: Callable[[Task, AbstractFileSystem], None]
     task_to_id_prompt: Callable[[Task], ZeroShotTask]
     task_result_status: Callable[[Task, List[LMC]], ResultStatus]
 
 
 class BenchmarkRunner(ABC):
     @abstractmethod
-    def run(self, setup: Callable[[Path], None], command: OpenInterpreterCommand, prompt: str, display: bool) -> List[LMC]:
+    def run(self, setup: Callable[[AbstractFileSystem], None], command: OpenInterpreterCommand, prompt: str) -> List[LMC]:
         ...
 
 
 class DefaultBenchmarkRunner(BenchmarkRunner):
-    def run(self, setup: Callable[[Path], None], command: OpenInterpreterCommand, prompt: str, display: bool) -> List[LMC]:
-        return worker.run(command, prompt, display) # type: ignore
+    def run(self, setup: Callable[[AbstractFileSystem], None], command: OpenInterpreterCommand, prompt: str) -> List[LMC]:
+        return worker.run(command, prompt) # type: ignore
 
 
 class DockerBenchmarkRunner(BenchmarkRunner):
     WORKER_NAME = "worker"
 
-    def run(self, setup: Callable[[Path], None], command: OpenInterpreterCommand, prompt: str, display: bool) -> List[LMC]:
+    def run(self, setup: Callable[[AbstractFileSystem], None], command: OpenInterpreterCommand, prompt: str) -> List[LMC]:
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / Path("output")
             input_dir = Path(temp_dir) / Path("input")
             command_json_str = json.dumps(command)
             input_dir.mkdir(parents=True)
             output_dir.mkdir(parents=True)
-            setup(Path(input_dir))
+            setup(LocalBasedFS(str(input_dir)))
             dcmd = [
                 "docker", "run", "-t",
                 "-v", f"{input_dir}:/input", "-v", f"{output_dir}:/output",
@@ -102,7 +103,7 @@ class DockerBenchmarkRunner(BenchmarkRunner):
                 return messages
     
 
-def run_benchmark(benchmark: Benchmark, command: OpenInterpreterCommand, display: bool = False) -> List[TaskResult]:
+def run_benchmark(benchmark: Benchmark, command: OpenInterpreterCommand) -> List[TaskResult]:
     all_tasks = benchmark.get_tasks()
     runner = DefaultBenchmarkRunner()
     results: List[TaskResult] = []
@@ -114,7 +115,7 @@ def run_benchmark(benchmark: Benchmark, command: OpenInterpreterCommand, display
 
         logger.debug(f"  Running task {zstask['id']}...")
         start = datetime.now()
-        messages  = runner.run(lambda p: benchmark.setup_input_dir(task, p), command, zstask["prompt"], display=display)
+        messages  = runner.run(lambda fs: benchmark.setup_input_dir(task, fs), command, zstask["prompt"])
         end = datetime.now()
 
         status = benchmark.task_result_status(task, messages)
@@ -135,7 +136,7 @@ def run_benchmark(benchmark: Benchmark, command: OpenInterpreterCommand, display
     return results
 
 
-def run_benchmark_threaded_pool(benchmark: Benchmark[Task], command: OpenInterpreterCommand, runner: BenchmarkRunner, n_threads: Optional[int] = None, display: bool = False) -> List[TaskResult]:
+def run_benchmark_threaded_pool(benchmark: Benchmark[Task], command: OpenInterpreterCommand, runner: BenchmarkRunner, n_threads: Optional[int] = None) -> List[TaskResult]:
     all_tasks = benchmark.get_tasks()
     task_results: List[TaskResult] = []
 
@@ -144,7 +145,7 @@ def run_benchmark_threaded_pool(benchmark: Benchmark[Task], command: OpenInterpr
         logger.debug(f"  task {zstask['id']}: RUNNING...")
         start = datetime.now()
         try:
-            messages = runner.run(lambda p: benchmark.setup_input_dir(task, p), command, zstask["prompt"], display=display)
+            messages = runner.run(lambda p: benchmark.setup_input_dir(task, p), command, zstask["prompt"])
             status = benchmark.task_result_status(task, messages)
         except Exception as e:
             logger.debug(f"  task {zstask['id']}: EXCEPTION!")
@@ -175,7 +176,7 @@ def run_benchmark_threaded_pool(benchmark: Benchmark[Task], command: OpenInterpr
     return task_results
 
 
-def run_benchmark_threaded(benchmark: Benchmark[Task], command: OpenInterpreterCommand, n_threads: int = 2, display: bool = False) -> List[TaskResult]:
+def run_benchmark_threaded(benchmark: Benchmark[Task], command: OpenInterpreterCommand, n_threads: int = 2) -> List[TaskResult]:
     all_tasks = benchmark.get_tasks()
     runner = DefaultBenchmarkRunner()
     results: Queue[TaskResult] = Queue()
@@ -192,7 +193,7 @@ def run_benchmark_threaded(benchmark: Benchmark[Task], command: OpenInterpreterC
             zstask = benchmark.task_to_id_prompt(task)
             logger.debug(f"  task {zstask['id']} on thread {thread_id}: RUNNING...")
             start = datetime.now()
-            messages = runner.run(lambda p: benchmark.setup_input_dir(task, p), command, zstask["prompt"], display=display)
+            messages = runner.run(lambda p: benchmark.setup_input_dir(task, p), command, zstask["prompt"])
             end = datetime.now()
             status = benchmark.task_result_status(task, messages)
             logger.debug(f"  task {zstask['id']} on thread {thread_id}: DONE!")

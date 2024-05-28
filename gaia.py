@@ -1,11 +1,11 @@
-from pathlib import Path
 import re
-import shutil
-from typing import Dict, List, Optional, TypedDict, cast
+from typing import Callable, Dict, List, Optional, TypedDict, cast
 from datasets import load_dataset
+from fsspec import AbstractFileSystem, filesystem
 
 from benchmark import Benchmark, ResultStatus, ZeroShotTask
 from constants import DATASETS, GAIA
+from utils import copy_between_fss
 
 
 GAIATask = TypedDict("GAIATask", {
@@ -19,19 +19,18 @@ GAIATask = TypedDict("GAIATask", {
 })
 
 
-def benchmark(first_n: Optional[int] = None) -> Benchmark[GAIATask]:
+def benchmark(first_n: Optional[int] = None, predicates: List[Callable[[GAIATask], bool]] = []) -> Benchmark[GAIATask]:
     def get_tasks() -> List[GAIATask]:
         ds = load_dataset(str(GAIA), "2023_all", split="validation", data_dir=str(DATASETS), trust_remote_code=True)
         tasks = cast(List[GAIATask], list(ds))
         n_tasks = first_n or len(tasks)
-        return tasks[:n_tasks]
+        return [t for t in tasks[:n_tasks] if all(p(t) for p in predicates)]
         
-    def setup_input_dir(task: GAIATask, dir_path: Path):
+    def setup_input_dir(task: GAIATask, fs: AbstractFileSystem):
         if task["file_path"] == "":
             return
-        src_file_path = Path(task["file_path"])
-        dst_file_path = dir_path / Path(task["file_name"])
-        shutil.copyfile(src_file_path, dst_file_path)
+        local_fs = filesystem("file")
+        copy_between_fss(local_fs, task["file_path"], fs, task["file_name"])
     
     def task_to_id_prompt(task: GAIATask) -> ZeroShotTask:
         file_path = f"input/{task['file_name']}"

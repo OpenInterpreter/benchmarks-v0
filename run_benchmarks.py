@@ -56,7 +56,7 @@ if __name__ == "__main__":
     
     print("command configuration:", args.command)
     now_utc = datetime.now(timezone.utc)
-    save_path = default_output_file_dir / Path(f"{args.command}-{dt_to_str(now_utc)}.csv")
+    save_path = default_output_file_dir / Path(f"{dt_to_str(now_utc)}-{args.command}.csv")
     print("output file:", save_path)
 
     if args.ntasks is None:
