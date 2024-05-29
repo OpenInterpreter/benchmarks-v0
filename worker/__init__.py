@@ -8,9 +8,7 @@ OUTPUT_PATH = Path("output/messages.json")
 
 
 def command_to_interpreter(cmd: Dict[str, Any]) -> OpenInterpreter:
-    # interpreter = OpenInterpreter(import_computer_api=True)
     from .profile import interpreter
-    interpreter = profile.interpreter
 
     interpreter.llm.model = cmd.get("model", interpreter.llm.model)  # type: ignore
     interpreter.llm.context_window = cmd.get("context_window", interpreter.llm.context_window)  # type: ignore
