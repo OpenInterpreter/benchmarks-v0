@@ -114,6 +114,7 @@ class DockerBenchmarkRunner(BenchmarkRunner):
             dcmd = [
                 "docker", "run", "-t",
                 "-v", f"{input_dir}:/input", "-v", f"{output_dir}:/output",
+                "--name", lt.to_zero_shot()["id"],
                 DockerBenchmarkRunner.WORKER_NAME,
                 command_json_str, f"{shlex.quote(prompt)}", output_dir
             ]
@@ -176,7 +177,7 @@ def run_task(lt: LoadedTask[Task], command: OpenInterpreterCommand, runner: Benc
         messages = []
     finally:
         end = datetime.now()
-        logger.debug(f"  task {zstask['id']}: DONE!")
+        logger.debug(f"  task {zstask['id']}: {status}!")
         return {
             "task_id": zstask["id"],
             "command": command,
