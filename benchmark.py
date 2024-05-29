@@ -7,6 +7,7 @@ import tempfile
 import traceback
 import uuid
 import shlex
+import time
 from pathlib import Path
 from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -111,10 +112,11 @@ class DockerBenchmarkRunner(BenchmarkRunner):
             input_dir.mkdir(parents=True, exist_ok=True)
             output_dir.mkdir(parents=True, exist_ok=True)
             lt.setup_input_dir(LocalBasedFS(str(input_dir)))
+            container_name = f"{lt.to_zero_shot()["id"]}_{time.time()}"
             dcmd = [
                 "docker", "run", "-t",
                 "-v", f"{input_dir}:/input", "-v", f"{output_dir}:/output",
-                "--name", lt.to_zero_shot()["id"],
+                "--name", container_name,
                 DockerBenchmarkRunner.WORKER_NAME,
                 command_json_str, f"{shlex.quote(prompt)}", output_dir
             ]
