@@ -38,7 +38,7 @@ class ArgumentsNamespace(argparse.Namespace):
 
 
 if __name__ == "__main__":
-    default_command_id = "gpt35turbo"
+    default_command_id = ""
     default_output_file_dir = Path(".local/results")
 
     parser = argparse.ArgumentParser()

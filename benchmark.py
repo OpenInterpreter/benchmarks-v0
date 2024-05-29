@@ -46,6 +46,7 @@ class OpenInterpreterCommand(TypedDict):
     api_base: NotRequired[str]
     api_key: NotRequired[str]
     custom_instructions: NotRequired[str]
+    supports_functions: NotRequired[bool]
 
 
 class TaskResult(TypedDict):
