@@ -4,7 +4,7 @@ from interpreter import OpenInterpreter
 
 interpreter = OpenInterpreter()
 
-interpreter.llm.model = "groq/llama3-8b-8192"
+interpreter.llm.model = "groq/llama3-70b-8192"
 interpreter.llm.api_key = os.getenv("GROQ_API_KEY", "")
 interpreter.llm.supports_functions = False
 interpreter.auto_run = True
@@ -52,3 +52,92 @@ interpreter.llm.execution_instructions = False
 
 # Set offline for all local models
 interpreter.offline = True
+
+
+
+
+
+interpreter.system_message = """You are an AI assistant specialized in coding and automation, providing concise code snippets and friendly responses to enhance the user's productivity."""
+
+interpreter.messages = [
+{
+    "role": "user",
+    "type": "message",
+    "content": "Run a directory listing in the current folder."
+},
+{
+    "role": "assistant",
+    "type": "message",
+    "content": "Absolutely, fetching the directory listing now."
+},
+{
+    "role": "assistant",
+    "type": "code",
+    "format": "shell",
+    "content": "ls -la"
+},
+{
+    "role": "computer",
+    "type": "console",
+    "format": "output",
+    "content": "total 48\ndrwxr-xr-x  12 user  staff  384 Jan 12 12:34 .\ndrwxr-xr-x   6 user  staff  192 Jan 12 12:34 .."
+},
+{
+    "role": "assistant",
+    "type": "message",
+    "content": "Here's the directory listing:\n\ntotal 48\ndrwxr-xr-x  12 user  staff  384 Jan 12 12:34 .\ndrwxr-xr-x   6 user  staff  192 Jan 12 12:34 ..\n\nWhat's next on your agenda?"
+},
+{
+    "role": "user",
+    "type": "message",
+    "content": "Can you multiply 2380 by 3875 for me?"
+},
+{
+    "role": "assistant",
+    "type": "code",
+    "format": "python",
+    "content": "2380*3875"
+},
+{
+    "role": "computer",
+    "type": "console",
+    "format": "output",
+    "content": "9222500"
+},
+{
+    "role": "assistant",
+    "type": "message",
+    "content": "The multiplication of 2380 by 3875 gives you 9222500. Do you need this data for anything else?"
+},
+{
+    "role": "user",
+    "type": "message",
+    "content": "Great, I'll talk to you in an hour!"
+},
+{
+    "role": "assistant",
+    "type": "message",
+    "content": "Alright, I'll be here. Talk to you soon!"
+}
+]
+
+
+interpreter.llm.supports_functions = False
+
+# interpreter.user_message_template = "{content} Please send me some code that would be able to answer my question, in the form of ```python\n... the code ...\n``` or ```shell\n... the code ...\n```"
+interpreter.code_output_template = '''I executed that code. This was the output: """{content}"""\n\nWhat does this output mean (I can't understand it, please help) / what code needs to be run next (if anything, or are we done)? I can't replace any placeholders.'''
+interpreter.empty_code_output_template = "The code above was executed on my machine. It produced no text output. what's next (if anything, or are we done?)"
+interpreter.code_output_sender = "user"
+interpreter.max_output = 600
+interpreter.llm.context_window = 8000
+interpreter.force_task_completion = False
+interpreter.user_message_template = "{content}. If my question must be solved by running code on my computer, send me code to run enclosed in ```python (preferred) or ```shell (less preferred). Otherwise, don't send code. Be concise, don't include anything unnecessary. Don't use placeholders, I can't edit code."
+interpreter.user_message_template = "{content}"
+interpreter.llm.execution_instructions = False
+interpreter.auto_run = True
+
+# Set offline for all local models
+interpreter.offline = True
+
+interpreter.llm.model = "groq/llama3-70b-8192"
+interpreter.llm.api_key = "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"

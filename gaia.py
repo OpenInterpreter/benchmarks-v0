@@ -23,16 +23,29 @@ GAIATask = TypedDict("GAIATask", {
 
 def judge_result(initial_prompt: str, last_msg: str, expected: str) -> ResultStatus:
     judge = OpenInterpreter()
-    judge.llm.model = "gpt-4-turbo"
+    judge.llm.model = "gpt-4"
     judge.llm.context_window = 128000  # type: ignore
 
-    guide = "Answer with the single word 'correct', 'incorrect', 'unknown', or 'error', and do NOT answer in markdown"
-    q = f"Does the message '{last_msg}' contain the answer '{expected}' to the prompt '{initial_prompt}'?"
-    prompt = f"{guide}: {q}"
-    judge_msgs = cast(List[LMC], judge.chat(prompt, display=False))
+    judge.system_message = "You are a grading AI. Answer with the single word 'correct' or 'incorrect', and do NOT answer in markdown."
+    q = f"""
+    
+# QUESTION:
+{initial_prompt}
+# CORRECT ANSWER:
+{expected}
+---
+# STUDENT'S ANSWER:
+{last_msg}
+---
+
+Did the student get the answer correct?
+
+    """.strip()
+    
+    judge_msgs = cast(List[LMC], judge.chat(q, display=False))
     assert len(judge_msgs) > 0, "the judge is speechless!"
 
-    judge_result = judge_msgs[0]["content"]
+    judge_result = judge_msgs[0]["content"].strip()
     assert judge_result in {"correct", "incorrect", "unknown", "error"}, f"the judge's response was unexpected! response: {judge_result}"
 
     judge.computer.terminate()

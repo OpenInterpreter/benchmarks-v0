@@ -78,4 +78,7 @@ if __name__ == "__main__":
         print("number of workers:", args.nworkers)
         results = run_benchmark_worker_pool(b, command, runner, args.nworkers)
 
+    correct_count = sum(1 for result in results if result['status'] == 'correct')
+    print(f"Number of correct results: {correct_count}/{args.ntasks}")
+
     save_results(results, save_path)
