@@ -191,7 +191,22 @@ class DockerBenchmarkRunner(BenchmarkRunner):
             with open(messages_path) as f:
                 messages = json.load(f)
                 return messages
-    
+
+
+class E2BBenchmarkRunner(BenchmarkRunner):
+    def run(self, setup, command: OpenInterpreterCommand, prompt: str, display: bool) -> List[LMC]:
+        from e2b import Sandbox
+
+        with Sandbox(template="worker-sandbox") as sandbox:
+            print("running process")
+            sandbox.process.start_and_wait("pwd",
+                                           on_stdout=lambda msg: print("worker-sandbox:", msg.line),
+                                           on_stderr=lambda msg: print("worker-sandbox-error:", msg.line),
+                                           on_exit=lambda code: print("worker-sandbox-exit:", code))
+            print("finished running process")
+
+        return []
+
 
 def run_benchmark(benchmark: TasksStore, mod: TaskSetModifier, command: OpenInterpreterCommand) -> List[TaskResult]:
     all_tasks = mod.modify(benchmark.get_tasks())
