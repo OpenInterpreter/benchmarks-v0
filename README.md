@@ -7,6 +7,7 @@ This repo is used to run various AI benchmarks on the [Open Interpreter project]
 1. Make sure the following software is installed on your computer.
 
 - [Git](https://git-scm.com)
+- [Git-LFS](https://git-lfs.com)
 - [Python](https://www.python.org)
 - [Docker](https://www.docker.com/)
 
