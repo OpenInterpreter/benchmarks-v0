@@ -1,0 +1,2 @@
+jsonschema
+git+https://github.com/imapersonman/open-interpreter.git@main
