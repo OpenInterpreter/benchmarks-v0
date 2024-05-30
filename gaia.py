@@ -5,7 +5,7 @@ from datasets import load_dataset
 from fsspec import AbstractFileSystem, filesystem
 from interpreter import OpenInterpreter
 
-from benchmark import LMC, Benchmark, LoadedTask, ResultStatus, TaskResult, ZeroShotTask
+from benchmark import LMC, TasksStore, LoadedTask, ResultStatus, TaskResult, TaskSetModifier, ZeroShotTask, judge_result
 from constants import DATASETS, GAIA
 from utils import copy_between_fss, wrapping_offset
 
@@ -19,37 +19,6 @@ GAIATask = TypedDict("GAIATask", {
     "file_path": str,
     "Annotator Metadata": Optional[Dict[str, str]]
 })
-
-
-def judge_result(initial_prompt: str, last_msg: str, expected: str) -> ResultStatus:
-    judge = OpenInterpreter()
-    judge.llm.model = "gpt-4"
-    judge.llm.context_window = 128000  # type: ignore
-
-    judge.system_message = "You are a grading AI. Answer with the single word 'correct' or 'incorrect', and do NOT answer in markdown."
-    q = f"""
-    
-# QUESTION:
-{initial_prompt}
-# CORRECT ANSWER:
-{expected}
----
-# STUDENT'S ANSWER:
-{last_msg}
----
-
-Did the student get the answer correct?
-
-    """.strip()
-    
-    judge_msgs = cast(List[LMC], judge.chat(q, display=False))
-    assert len(judge_msgs) > 0, "the judge is speechless!"
-
-    judge_result = judge_msgs[0]["content"].strip()
-    assert judge_result in {"correct", "incorrect", "unknown", "error"}, f"the judge's response was unexpected! response: {judge_result}"
-
-    judge.computer.terminate()
-    return judge_result  # type: ignore
 
 
 @dataclass
@@ -82,28 +51,12 @@ class LoadedGAIATask(LoadedTask[GAIATask]):
         prompt = self.to_zero_shot()["prompt"]
         return judge_result(prompt, final_message["content"], expected)
 
-        # final_answer_re = re.search("FINAL ANSWER: (.+)", final_message["content"])
-        # if final_answer_re is None:
-        #     return "unknown"
 
-        # actual = final_answer_re.group(1).strip()
-        # if actual.lower() != expected.lower():
-        #     return "incorrect"
-        # else:
-        #     return "correct"
-
-
-class GAIABenchmark(Benchmark[GAIATask]):
-    def __init__(self, first_n: Optional[int] = None, offset: int = 0, predicates: List[Callable[[GAIATask], bool]] = []):
-        self.first_n = first_n
-        self.offset = offset
-        self.predicates = predicates
-
+class GAIATasks(TasksStore[GAIATask]):
     def get_tasks(self) -> List[GAIATask]:
         ds = load_dataset(str(GAIA), "2023_all", split="validation", data_dir=str(DATASETS), trust_remote_code=True)
         tasks = cast(List[GAIATask], list(ds))
-        n_tasks = self.first_n or len(tasks)
-        return wrapping_offset([t for t in tasks if all(p(t) for p in self.predicates)], self.offset, n_tasks)
+        return tasks
         
     def load_task(self, task: GAIATask) -> LoadedTask[GAIATask]:
         return LoadedGAIATask(task)

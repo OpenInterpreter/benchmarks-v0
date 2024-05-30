@@ -5,9 +5,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
-from gaia import GAIABenchmark
-from benchmark import DefaultBenchmarkRunner, DockerBenchmarkRunner, TaskResult, run_benchmark_worker_pool
+from constants import DATASETS
+from custom import CustomTasks
+from benchmark import DockerBenchmarkRunner, OIBenchmarks, SizeOffsetModifier, TaskResult
 from commands import commands
+from gaia import GAIATasks
 
 
 def save_results(results: List[TaskResult], filepath: Path):
@@ -61,24 +63,16 @@ if __name__ == "__main__":
     save_path = default_output_file_dir / Path(f"{dt_to_str(now_utc)}-{args.command}.csv")
     print("output file:", save_path)
 
-    if args.ntasks is None:
-        b = GAIABenchmark()
-    else:
-        print("number of tasks:", args.ntasks)
-        b = GAIABenchmark(args.ntasks, args.task_offset, [
-            # lambda t: t["file_name"] != ""
-        ])
-    
-    command = commands[args.command]
-    runner = DockerBenchmarkRunner()
-    
-    if args.nworkers is None:
-        results = run_benchmark_worker_pool(b, command, runner)
-    else:
-        print("number of workers:", args.nworkers)
-        results = run_benchmark_worker_pool(b, command, runner, args.nworkers)
+    results = OIBenchmarks(
+        tasks=CustomTasks.from_list([
+            {"id": "simple", "prompt": "what is 3 + 4?", "answer": "7"},
+            {"id": "hard", "prompt": "who do you think you are??", "answer": "laptop"},
+        ]),
+        modifier=SizeOffsetModifier(ntasks=args.ntasks, offset=args.task_offset),
+        command=commands[args.command],
+        nworkers=args.nworkers
+    ).run()
 
     correct_count = sum(1 for result in results if result['status'] == 'correct')
-    print(f"Number of correct results: {correct_count}/{args.ntasks}")
-
+    print(f"Number of correct results: {correct_count}/{len(results)}")
     save_results(results, save_path)
