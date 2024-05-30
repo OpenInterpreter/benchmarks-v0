@@ -9,17 +9,17 @@ import uuid
 import shlex
 import time
 from pathlib import Path
-from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from queue import Queue
 from threading import Thread
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Callable, Dict, Generic, List, Literal, NotRequired, Optional, Tuple, TypeVar, TypedDict, cast
+from typing import Dict, Generic, List, Literal, NotRequired, Optional, Tuple, TypeVar, TypedDict, cast
 from fsspec import AbstractFileSystem
+from interpreter import OpenInterpreter
 
-from constants import LOCAL
-from utils import LocalBasedFS, change_working_dir
+from utils import LocalBasedFS, change_working_dir, wrapping_offset
 import worker
 
 
@@ -63,7 +63,7 @@ class TaskResult(TypedDict):
 class LoadedTask(Generic[Task]):
     @abstractmethod
     def setup_input_dir(self, fs: AbstractFileSystem):
-        raise NotImplementedError()
+        ...
     
     @abstractmethod
     def to_zero_shot(self) -> ZeroShotTask:
@@ -72,6 +72,26 @@ class LoadedTask(Generic[Task]):
     @abstractmethod
     def to_result_status(self, messages: List[LMC]) -> ResultStatus:
         raise NotImplementedError()
+    
+
+class TaskSetModifier(ABC, Generic[Task]):
+    @abstractmethod
+    def modify(self, task_set: List[Task]) -> List[Task]:
+        ...
+
+
+class IdModifier(TaskSetModifier, Generic[Task]):
+    def modify(self, task_set: List[Task]) -> List[Task]:
+        return task_set
+
+
+@dataclass
+class SizeOffsetModifier(TaskSetModifier, Generic[Task]):
+    offset: int
+    ntasks: Optional[int]
+
+    def modify(self, task_set: List[Task]) -> List[Task]:
+        return wrapping_offset([t for t in task_set], self.offset, self.ntasks or len(task_set))
 
 
 class Benchmark(Generic[Task]):
@@ -131,8 +151,8 @@ class DockerBenchmarkRunner(BenchmarkRunner):
                 return messages
     
 
-def run_benchmark(benchmark: Benchmark, command: OpenInterpreterCommand) -> List[TaskResult]:
-    all_tasks = benchmark.get_tasks()
+def run_benchmark(benchmark: Benchmark, mod: TaskSetModifier, command: OpenInterpreterCommand) -> List[TaskResult]:
+    all_tasks = mod.modify(benchmark.get_tasks())
     runner = DefaultBenchmarkRunner()
     results: List[TaskResult] = []
 
@@ -191,8 +211,8 @@ def run_task(lt: LoadedTask[Task], command: OpenInterpreterCommand, runner: Benc
         }
 
 
-def run_benchmark_worker_pool(benchmark: Benchmark[Task], command: OpenInterpreterCommand, runner: BenchmarkRunner, n_workers: Optional[int] = None) -> List[TaskResult]:
-    all_tasks = benchmark.get_tasks()
+def run_benchmark_worker_pool(benchmark: Benchmark[Task], mod: TaskSetModifier[Task], command: OpenInterpreterCommand, runner: BenchmarkRunner, n_workers: Optional[int] = None) -> List[TaskResult]:
+    all_tasks = mod.modify(benchmark.get_tasks())
     task_results: List[TaskResult] = []
 
     actual_n_workers = n_workers or os.cpu_count()
@@ -207,8 +227,8 @@ def run_benchmark_worker_pool(benchmark: Benchmark[Task], command: OpenInterpret
     return task_results
 
 
-def run_benchmark_threaded(benchmark: Benchmark[Task], command: OpenInterpreterCommand, n_threads: int = 2) -> List[TaskResult]:
-    all_tasks = benchmark.get_tasks()
+def run_benchmark_threaded(benchmark: Benchmark[Task], mod: TaskSetModifier, command: OpenInterpreterCommand, n_threads: int = 2) -> List[TaskResult]:
+    all_tasks = mod.modify(benchmark.get_tasks())
     runner = DefaultBenchmarkRunner()
     results: Queue[TaskResult] = Queue()
     threads: List[Tuple[Queue, Thread]] = []
@@ -274,3 +294,47 @@ def run_benchmark_threaded(benchmark: Benchmark[Task], command: OpenInterpreterC
     logger.debug("done!")
 
     return list(results.queue)
+
+
+def judge_result(initial_prompt: str, last_msg: str, expected: str) -> ResultStatus:
+    judge = OpenInterpreter()
+    judge.llm.model = "gpt-4"
+    judge.llm.context_window = 128000  # type: ignore
+
+    judge.system_message = "You are a grading AI. Answer with the single word 'correct' or 'incorrect', and do NOT answer in markdown."
+    q = f"""
+    
+# QUESTION:
+{initial_prompt}
+# CORRECT ANSWER:
+{expected}
+---
+# STUDENT'S ANSWER:
+{last_msg}
+---
+
+Did the student get the answer correct?
+
+    """.strip()
+    
+    judge_msgs = cast(List[LMC], judge.chat(q, display=False))
+    assert len(judge_msgs) > 0, "the judge is speechless!"
+
+    judge_result = judge_msgs[0]["content"].strip().lower()
+    assert judge_result in {"correct", "incorrect", "unknown", "error"}, f"the judge's response was unexpected! response: {judge_result}"
+
+    judge.computer.terminate()
+    return judge_result  # type: ignore
+
+
+@dataclass
+class OIBenchmarks:
+    benchmark: Benchmark
+    modifier: TaskSetModifier
+    command: OpenInterpreterCommand
+    runner: BenchmarkRunner
+    nworkers: Optional[int] = None
+
+    def run(self) -> List[TaskResult]:
+        results = run_benchmark_worker_pool(self.benchmark, self.modifier, self.command, self.runner, self.nworkers)
+        return results
