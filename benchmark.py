@@ -10,7 +10,7 @@ import shlex
 import time
 from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from queue import Queue
 from threading import Thread
 from abc import ABC, abstractmethod
@@ -330,9 +330,9 @@ Did the student get the answer correct?
 @dataclass
 class OIBenchmarks:
     benchmark: Benchmark
-    modifier: TaskSetModifier
     command: OpenInterpreterCommand
-    runner: BenchmarkRunner
+    runner: BenchmarkRunner = field(default_factory=DockerBenchmarkRunner)
+    modifier: TaskSetModifier = field(default_factory=IdModifier)
     nworkers: Optional[int] = None
 
     def run(self) -> List[TaskResult]:

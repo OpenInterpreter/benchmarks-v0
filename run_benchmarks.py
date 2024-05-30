@@ -64,15 +64,12 @@ if __name__ == "__main__":
     print("output file:", save_path)
 
     results = OIBenchmarks(
-        # benchmark=GAIABenchmark(),
         benchmark=CustomBenchmark.from_list([
             {"id": "simple", "prompt": "what is 3 + 4?", "answer": "7"},
             {"id": "hard", "prompt": "who do you think you are??", "answer": "laptop"},
         ]),
-        # benchmark=CustomBenchmark.from_csv(DATASETS / "custom" / "debug.csv"),
         modifier=SizeOffsetModifier(ntasks=args.ntasks, offset=args.task_offset),
         command=commands[args.command],
-        runner=DockerBenchmarkRunner()
     ).run()
 
     correct_count = sum(1 for result in results if result['status'] == 'correct')
