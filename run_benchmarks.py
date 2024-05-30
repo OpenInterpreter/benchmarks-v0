@@ -38,7 +38,7 @@ class ArgumentsNamespace(argparse.Namespace):
 
 
 if __name__ == "__main__":
-    default_command_id = "gpt35turbo"
+    default_command_id = ""
     default_output_file_dir = Path(".local/results")
 
     parser = argparse.ArgumentParser()
@@ -77,5 +77,8 @@ if __name__ == "__main__":
     else:
         print("number of workers:", args.nworkers)
         results = run_benchmark_worker_pool(b, command, runner, args.nworkers)
+
+    correct_count = sum(1 for result in results if result['status'] == 'correct')
+    print(f"Number of correct results: {correct_count}/{args.ntasks}")
 
     save_results(results, save_path)
