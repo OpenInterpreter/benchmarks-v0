@@ -70,6 +70,7 @@ if __name__ == "__main__":
         ]),
         modifier=SizeOffsetModifier(ntasks=args.ntasks, offset=args.task_offset),
         command=commands[args.command],
+        nworkers=args.nworkers
     ).run()
 
     correct_count = sum(1 for result in results if result['status'] == 'correct')
