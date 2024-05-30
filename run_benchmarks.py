@@ -9,6 +9,7 @@ from constants import DATASETS
 from custom import CustomBenchmark
 from benchmark import DockerBenchmarkRunner, OIBenchmarks, SizeOffsetModifier, TaskResult
 from commands import commands
+from gaia import GAIABenchmark
 
 
 def save_results(results: List[TaskResult], filepath: Path):
@@ -64,11 +65,11 @@ if __name__ == "__main__":
 
     results = OIBenchmarks(
         # benchmark=GAIABenchmark(),
-        # benchmark=CustomBenchmark.from_list([
-        #     {"id": "simple", "prompt": "what is 3 + 4?", "answer": "7"},
-        #     {"id": "hard", "prompt": "who do you think you are??", "answer": "iamlaptop"},
-        # ]),
-        benchmark=CustomBenchmark.from_csv(DATASETS / "custom" / "debug.csv"),
+        benchmark=CustomBenchmark.from_list([
+            {"id": "simple", "prompt": "what is 3 + 4?", "answer": "7"},
+            {"id": "hard", "prompt": "who do you think you are??", "answer": "laptop"},
+        ]),
+        # benchmark=CustomBenchmark.from_csv(DATASETS / "custom" / "debug.csv"),
         modifier=SizeOffsetModifier(ntasks=args.ntasks, offset=args.task_offset),
         command=commands[args.command],
         runner=DockerBenchmarkRunner()
