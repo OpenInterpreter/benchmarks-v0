@@ -1,4 +1,4 @@
 datasets
 jsonschema
-open-interpreter
+git+https://github.com/imapersonman/open-interpreter.git@main
 fsspec
