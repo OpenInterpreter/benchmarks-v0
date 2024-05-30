@@ -32,6 +32,7 @@ from rich.spinner import Spinner
 from rich.text import Text
 from rich.padding import Padding
 
+from e2b_desktop import Desktop
 from utils import LocalBasedFS, wrapping_offset
 import worker
 
@@ -194,16 +195,45 @@ class DockerBenchmarkRunner(BenchmarkRunner):
 
 
 class E2BBenchmarkRunner(BenchmarkRunner):
-    def run(self, setup, command: OpenInterpreterCommand, prompt: str, display: bool) -> List[LMC]:
-        from e2b import Sandbox
+    def run(self, setup, command: OpenInterpreterCommand, prompt: str) -> List[LMC]:
+        # with Sandbox(template="worker-sandbox") as sandbox:
+        #     print("running process")
+        #     sandbox.process.start_and_wait("pwd",
+        #                                    on_stdout=lambda msg: print("worker-sandbox:", msg.line),
+        #                                    on_stderr=lambda msg: print("worker-sandbox-error:", msg.line),
+        #                                    on_exit=lambda code: print("worker-sandbox-exit:", code))
+        #     print("finished running process")
+        with Desktop() as desktop:
+            desktop.screenshot("screenshot-1.png")
 
-        with Sandbox(template="worker-sandbox") as sandbox:
-            print("running process")
-            sandbox.process.start_and_wait("pwd",
-                                           on_stdout=lambda msg: print("worker-sandbox:", msg.line),
-                                           on_stderr=lambda msg: print("worker-sandbox-error:", msg.line),
-                                           on_exit=lambda code: print("worker-sandbox-exit:", code))
-            print("finished running process")
+            # Create file and open text editor
+            file = "/home/user/test.txt"
+            desktop.filesystem.write(file, "world!")
+            
+            # Normally, we would use `desktop.process.start_and_wait()` to run a new process
+            # and wait until it finishes.
+            # However, the mousepad command does not exit until you close the window so we
+            # we need to just start the process and run it in the background so it doesn't
+            # block our code.
+            desktop.process.start(
+                f"mousepad {file}",
+                env_vars={"DISPLAY": desktop.DISPLAY},
+                on_stderr=lambda stderr: print(stderr),
+                on_stdout=lambda stdout: print(stdout),
+                cwd="/home/user",
+            )
+            time.sleep(2)  
+            #####
+            
+            desktop.screenshot("screenshot-2.png")
+
+            # Write "Hello, " in the text editor
+            desktop.pyautogui(
+                """
+        pyautogui.write("Hello, ")
+        """
+            )
+            desktop.screenshot("screenshot-3.png")
 
         return []
 
