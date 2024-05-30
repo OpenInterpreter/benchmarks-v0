@@ -11,7 +11,7 @@ from typing import List, TypedDict, cast
 import jsonschema
 import jsonschema.validators
 
-from benchmark import LMC, Benchmark, LoadedTask, ResultStatus, ZeroShotTask, judge_result
+from benchmark import LMC, TasksStore, LoadedTask, ResultStatus, ZeroShotTask, judge_result
 
 
 CUSTOM_TASK_SCHEMA = {
@@ -54,15 +54,15 @@ class LoadedCustomTask(LoadedTask[CustomTask]):
 
 
 @dataclass
-class CustomBenchmark(Benchmark[CustomTask]):
+class CustomTasks(TasksStore[CustomTask]):
     tasks: List[CustomTask] = field(default_factory=list)
 
     @staticmethod
-    def from_list(l: List[CustomTask]) -> "CustomBenchmark":
-        return CustomBenchmark(l)
+    def from_list(l: List[CustomTask]) -> "CustomTasks":
+        return CustomTasks(l)
     
     @staticmethod
-    def from_csv(path: PathLike) -> "CustomBenchmark":
+    def from_csv(path: PathLike) -> "CustomTasks":
         rows: List[CustomTask] = []
         if Path(path).exists():
             with open(path, "r") as file:
@@ -72,7 +72,7 @@ class CustomBenchmark(Benchmark[CustomTask]):
                     rows.append(cast(CustomTask, row))
         else:
             raise FileNotFoundError(f"'{path}' does not exist, so it can't be used to load a CustomBenchmark.")
-        return CustomBenchmark(rows)
+        return CustomTasks(rows)
 
     def get_tasks(self) -> List[CustomTask]:
         return self.tasks

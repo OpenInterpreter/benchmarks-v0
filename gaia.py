@@ -5,7 +5,7 @@ from datasets import load_dataset
 from fsspec import AbstractFileSystem, filesystem
 from interpreter import OpenInterpreter
 
-from benchmark import LMC, Benchmark, LoadedTask, ResultStatus, TaskResult, TaskSetModifier, ZeroShotTask, judge_result
+from benchmark import LMC, TasksStore, LoadedTask, ResultStatus, TaskResult, TaskSetModifier, ZeroShotTask, judge_result
 from constants import DATASETS, GAIA
 from utils import copy_between_fss, wrapping_offset
 
@@ -52,7 +52,7 @@ class LoadedGAIATask(LoadedTask[GAIATask]):
         return judge_result(prompt, final_message["content"], expected)
 
 
-class GAIABenchmark(Benchmark[GAIATask]):
+class GAIATasks(TasksStore[GAIATask]):
     def get_tasks(self) -> List[GAIATask]:
         ds = load_dataset(str(GAIA), "2023_all", split="validation", data_dir=str(DATASETS), trust_remote_code=True)
         tasks = cast(List[GAIATask], list(ds))

@@ -94,7 +94,7 @@ class SizeOffsetModifier(TaskSetModifier, Generic[Task]):
         return wrapping_offset([t for t in task_set], self.offset, self.ntasks or len(task_set))
 
 
-class Benchmark(Generic[Task]):
+class TasksStore(Generic[Task]):
     @abstractmethod
     def get_tasks(self) -> List[Task]:
         raise NotImplementedError()
@@ -151,7 +151,7 @@ class DockerBenchmarkRunner(BenchmarkRunner):
                 return messages
     
 
-def run_benchmark(benchmark: Benchmark, mod: TaskSetModifier, command: OpenInterpreterCommand) -> List[TaskResult]:
+def run_benchmark(benchmark: TasksStore, mod: TaskSetModifier, command: OpenInterpreterCommand) -> List[TaskResult]:
     all_tasks = mod.modify(benchmark.get_tasks())
     runner = DefaultBenchmarkRunner()
     results: List[TaskResult] = []
@@ -211,7 +211,7 @@ def run_task(lt: LoadedTask[Task], command: OpenInterpreterCommand, runner: Benc
         }
 
 
-def run_benchmark_worker_pool(benchmark: Benchmark[Task], mod: TaskSetModifier[Task], command: OpenInterpreterCommand, runner: BenchmarkRunner, n_workers: Optional[int] = None) -> List[TaskResult]:
+def run_benchmark_worker_pool(benchmark: TasksStore[Task], mod: TaskSetModifier[Task], command: OpenInterpreterCommand, runner: BenchmarkRunner, n_workers: Optional[int] = None) -> List[TaskResult]:
     all_tasks = mod.modify(benchmark.get_tasks())
     task_results: List[TaskResult] = []
 
@@ -227,7 +227,7 @@ def run_benchmark_worker_pool(benchmark: Benchmark[Task], mod: TaskSetModifier[T
     return task_results
 
 
-def run_benchmark_threaded(benchmark: Benchmark[Task], mod: TaskSetModifier, command: OpenInterpreterCommand, n_threads: int = 2) -> List[TaskResult]:
+def run_benchmark_threaded(benchmark: TasksStore[Task], mod: TaskSetModifier, command: OpenInterpreterCommand, n_threads: int = 2) -> List[TaskResult]:
     all_tasks = mod.modify(benchmark.get_tasks())
     runner = DefaultBenchmarkRunner()
     results: Queue[TaskResult] = Queue()
@@ -329,12 +329,12 @@ Did the student get the answer correct?
 
 @dataclass
 class OIBenchmarks:
-    benchmark: Benchmark
+    tasks: TasksStore
     command: OpenInterpreterCommand
     runner: BenchmarkRunner = field(default_factory=DockerBenchmarkRunner)
     modifier: TaskSetModifier = field(default_factory=IdModifier)
     nworkers: Optional[int] = None
 
     def run(self) -> List[TaskResult]:
-        results = run_benchmark_worker_pool(self.benchmark, self.modifier, self.command, self.runner, self.nworkers)
+        results = run_benchmark_worker_pool(self.tasks, self.modifier, self.command, self.runner, self.nworkers)
         return results

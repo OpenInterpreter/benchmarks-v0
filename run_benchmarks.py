@@ -6,10 +6,10 @@ from pathlib import Path
 from typing import List, Optional
 
 from constants import DATASETS
-from custom import CustomBenchmark
+from custom import CustomTasks
 from benchmark import DockerBenchmarkRunner, OIBenchmarks, SizeOffsetModifier, TaskResult
 from commands import commands
-from gaia import GAIABenchmark
+from gaia import GAIATasks
 
 
 def save_results(results: List[TaskResult], filepath: Path):
@@ -64,7 +64,7 @@ if __name__ == "__main__":
     print("output file:", save_path)
 
     results = OIBenchmarks(
-        benchmark=CustomBenchmark.from_list([
+        tasks=CustomTasks.from_list([
             {"id": "simple", "prompt": "what is 3 + 4?", "answer": "7"},
             {"id": "hard", "prompt": "who do you think you are??", "answer": "laptop"},
         ]),
