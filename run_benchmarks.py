@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from constants import DATASETS
 from custom import CustomTasks
-from benchmark import DefaultBenchmarkRunner, DockerBenchmarkRunner, E2BBenchmarkRunner, ModifierPipe, OIBenchmarks, SizeOffsetModifier, TaskResult
+from benchmark import DefaultBenchmarkRunner, DockerBenchmarkRunner, E2BDesktopBenchmarkRunner, E2BTerminalBenchmarkRunner, ModifierPipe, OIBenchmarks, SizeOffsetModifier, TaskResult
 from commands import commands
 from gaia import GAIAFilesOnlyModifier, GAIATasks
 
@@ -78,7 +78,7 @@ if __name__ == "__main__":
         # modifier=SizeOffsetModifier(ntasks=args.ntasks, offset=args.task_offset),
         command=commands[args.command],
         nworkers=args.nworkers,
-        runner=E2BBenchmarkRunner(),
+        runner=E2BTerminalBenchmarkRunner(),
         # runner=DefaultBenchmarkRunner()
         server=args.server
     ).run()

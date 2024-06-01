@@ -1,4 +1,6 @@
 import asyncio
+from contextlib import contextmanager
+from io import BufferedIOBase, BytesIO, RawIOBase
 import json
 import logging
 import os
@@ -19,7 +21,7 @@ from queue import Queue
 from threading import Thread
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Callable, Dict, Generic, List, Literal, NotRequired, Optional, ParamSpec, Set, Tuple, TypeVar, TypedDict, cast
+from typing import Any, Callable, Any, Dict, Generic, List, Literal, NotRequired, Optional, ParamSpec, Set, Tuple, TypeVar, TypedDict, cast
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -32,9 +34,11 @@ from rich.spinner import Spinner
 from rich.text import Text
 from rich.padding import Padding
 
+import worker
+from e2b import Sandbox, ProcessMessage
 from e2b_desktop import Desktop
 from utils import LocalBasedFS, wrapping_offset
-import worker
+
 
 
 logger = logging.getLogger(__name__)
@@ -175,6 +179,7 @@ class DockerBenchmarkRunner(BenchmarkRunner):
                 "docker", "run", "-t",
                 "-v", f"{input_dir}:/input", "-v", f"{output_dir}:/output",
                 "--name", container_name,
+                # "--entrypoint='python -m worker.run'",
                 DockerBenchmarkRunner.WORKER_NAME,
                 command_json_str, f"{shlex.quote(prompt)}", "/", "/output"
             ]
@@ -194,16 +199,93 @@ class DockerBenchmarkRunner(BenchmarkRunner):
                 return messages
 
 
-class E2BBenchmarkRunner(BenchmarkRunner):
-    def run(self, setup, command: OpenInterpreterCommand, prompt: str) -> List[LMC]:
-        # with Sandbox(template="worker-sandbox") as sandbox:
-        #     print("running process")
-        #     sandbox.process.start_and_wait("pwd",
-        #                                    on_stdout=lambda msg: print("worker-sandbox:", msg.line),
-        #                                    on_stderr=lambda msg: print("worker-sandbox-error:", msg.line),
-        #                                    on_exit=lambda code: print("worker-sandbox-exit:", code))
-        #     print("finished running process")
-        with Desktop() as desktop:
+class E2BFile(RawIOBase):
+    def __init__(self, sandbox: Sandbox, path: os.PathLike, mode: str):
+        self.sandbox = sandbox
+        self.path = path
+        self.mode = mode
+    
+    def read(self, size=-1) -> bytes:
+        bs = self.sandbox.download_file(str(self.path))
+        if size == -1:
+            return bs
+        return bs[:size]
+    
+    def readinto(self, b):
+        bs = self.sandbox.download_file(str(self.path))
+        b[:len(bs)] = bs
+        return bs
+
+    def write(self, b):
+        self.sandbox.filesystem.write_bytes(str(self.path), b)
+        return len(b)
+    
+    def readable(self) -> bool:
+        return "r" in self.mode or "+" in self.mode
+
+    def writable(self) -> bool:
+        return "w" in self.mode or "+" in self.mode or "a" in self.mode
+
+
+class E2BFilesystem(AbstractFileSystem):
+    def __init__(self, sandbox: Sandbox, base: os.PathLike = Path("")):
+        self.sandbox = sandbox
+        self.base = base
+
+    def _full_path(self, path: str) -> str:
+        return f"{self.sandbox.get_hostname()}/{self.base}/{path}"
+    
+    def open(self, path: str, mode: str = 'r', **kwargs: Any) -> Any:
+        return E2BFile(self.sandbox, Path(self._full_path(path)), mode)
+    
+    def ls(self, path='', detail=True, **kwargs):
+        return self.sandbox.filesystem.list(path)
+
+
+class E2BTerminalBenchmarkRunner(BenchmarkRunner):
+    from rich.console import Console
+    rc = Console()
+
+    @staticmethod
+    def print_out(output: ProcessMessage):
+        rc = E2BTerminalBenchmarkRunner.rc
+        rc.print("[green]worker:[/green]", output.line)
+
+    @staticmethod
+    def print_err(output: ProcessMessage):
+        rc = E2BTerminalBenchmarkRunner.rc
+        rc.print("[red]worker:[/red]", output.line)
+
+    def run_cmd_blocking(self, sandbox: Sandbox, cmd: str, display: bool = True):
+        if display:
+            sandbox.process.start_and_wait(
+                cmd,
+                on_stdout=E2BTerminalBenchmarkRunner.print_out,
+                on_stderr=E2BTerminalBenchmarkRunner.print_err
+            )
+        else:
+            sandbox.process.start_and_wait(cmd)
+
+    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, prompt: str) -> List[LMC]:
+        with Sandbox(template="worker", cwd="/") as sandbox:
+            input_dir = "/input"
+            output_dir = "/output"
+            sandbox.filesystem.make_dir(input_dir)
+            sandbox.filesystem.make_dir(output_dir)
+            fs = E2BFilesystem(sandbox, Path("/input"))
+            lt.setup_input_dir(fs)
+            self.run_cmd_blocking(
+                sandbox,
+                f"sudo python -m worker.run {'{}'} '{prompt}' {output_dir}",
+                display=False)
+            messages_file = sandbox.download_file(str(Path(output_dir) / worker.OUTPUT_PATH))
+            messages_str = messages_file.decode()
+            return json.loads(messages_str)
+
+
+class E2BDesktopBenchmarkRunner(BenchmarkRunner):
+    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, prompt: str) -> List[LMC]:
+        with Desktop(template="screen") as desktop:
             desktop.screenshot("screenshot-1.png")
 
             # Create file and open text editor
@@ -215,7 +297,7 @@ class E2BBenchmarkRunner(BenchmarkRunner):
             # However, the mousepad command does not exit until you close the window so we
             # we need to just start the process and run it in the background so it doesn't
             # block our code.
-            desktop.process.start(
+            mousepad = desktop.process.start(
                 f"mousepad {file}",
                 env_vars={"DISPLAY": desktop.DISPLAY},
                 on_stderr=lambda stderr: print(stderr),
@@ -224,7 +306,7 @@ class E2BBenchmarkRunner(BenchmarkRunner):
             )
             time.sleep(2)  
             #####
-            
+
             desktop.screenshot("screenshot-2.png")
 
             # Write "Hello, " in the text editor
@@ -234,6 +316,14 @@ class E2BBenchmarkRunner(BenchmarkRunner):
         """
             )
             desktop.screenshot("screenshot-3.png")
+            mousepad.kill()
+            desktop.screenshot("screenshot-4.png")
+
+            desktop.process.start_and_wait(
+                "python3 -c 'import interpreter'",
+                on_stdout=lambda output: print("screen:", output.line),
+                on_stderr=lambda output: print("screen:", output.line)
+            )
 
         return []
 
