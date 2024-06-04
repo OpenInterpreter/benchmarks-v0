@@ -239,6 +239,7 @@ def run_task(lt: LoadedTask[Task], command: OpenInterpreterCommand, runner: Benc
 
 
 Result = TypeVar("Result")
+_P = ParamSpec("_P")
 
 
 class TaskDisplay(Generic[Result]):
@@ -250,7 +251,7 @@ class TaskDisplay(Generic[Result]):
         self._started_ids: List[Tuple[int, str]] = []
         self._results: Dict[int, Result] = {}
 
-    def wrap[**_P](self, fn: Callable[_P, Result], ext_str: str) -> Callable[_P, Result]:
+    def wrap(self, fn: Callable[_P, Result], ext_str: str) -> Callable[_P, Result]:
         def wrapped_fn(*args, **kwargs):
             ident = id(wrapped_fn)
             self._started(ident, ext_str)
