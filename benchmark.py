@@ -134,8 +134,8 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
             command_json_str = json.dumps(command)
             subprocess.run([
                 "python", "-m", "worker.run",
-                # command_json_str, f"{shlex.quote(prompt)}", output_dir
-            ], cwd=worker_dir)
+                command_json_str, f"{shlex.quote(prompt)}", worker_dir, output_dir
+            ])
             messages_path = worker_dir / worker.OUTPUT_PATH
             with open(messages_path, "r") as f:
                 messages = json.load(f)
@@ -162,7 +162,7 @@ class DockerBenchmarkRunner(BenchmarkRunner):
                 "-v", f"{input_dir}:/input", "-v", f"{output_dir}:/output",
                 "--name", container_name,
                 DockerBenchmarkRunner.WORKER_NAME,
-                command_json_str, f"{shlex.quote(prompt)}", "/output"
+                command_json_str, f"{shlex.quote(prompt)}", "/", "/output"
             ]
             subprocess.run(dcmd, stdout=subprocess.DEVNULL)
             messages_path = Path(temp_dir) / worker.OUTPUT_PATH
