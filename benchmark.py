@@ -153,7 +153,7 @@ class DockerBenchmarkRunner(BenchmarkRunner):
             input_dir.mkdir(parents=True, exist_ok=True)
             output_dir.mkdir(parents=True, exist_ok=True)
             lt.setup_input_dir(LocalBasedFS(str(input_dir)))
-            container_name = f"{lt.to_zero_shot()["id"]}_{time.time()}"
+            container_name = f"{lt.to_zero_shot()['id']}_{time.time()}"
             dcmd = [
                 "docker", "run", "-t",
                 "-v", f"{input_dir}:/input", "-v", f"{output_dir}:/output",
