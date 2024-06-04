@@ -132,7 +132,10 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
             lt.setup_input_dir(LocalBasedFS(str(input_dir)))
 
             command_json_str = json.dumps(command)
-            subprocess.run(["python", "-m", "worker.run", command_json_str, f"{shlex.quote(prompt)}", output_dir], cwd=worker_dir)
+            subprocess.run([
+                "python", "-m", "worker.run",
+                # command_json_str, f"{shlex.quote(prompt)}", output_dir
+            ], cwd=worker_dir)
             messages_path = worker_dir / worker.OUTPUT_PATH
             with open(messages_path, "r") as f:
                 messages = json.load(f)
