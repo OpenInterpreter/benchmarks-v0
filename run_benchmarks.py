@@ -70,13 +70,14 @@ if __name__ == "__main__":
         # ]),
         tasks=GAIATasks(),
         modifier=ModifierPipe([
-            GAIAFilesOnlyModifier(),
+            # GAIAFilesOnlyModifier(),
             SizeOffsetModifier(ntasks=args.ntasks, offset=args.task_offset)
         ]),
         # modifier=SizeOffsetModifier(ntasks=args.ntasks, offset=args.task_offset),
         command=commands[args.command],
         nworkers=args.nworkers,
-        runner=DefaultBenchmarkRunner()
+        # runner=DefaultBenchmarkRunner()
+        runner=DockerBenchmarkRunner()
     ).run()
 
     correct_count = sum(1 for result in results if result['status'] == 'correct')

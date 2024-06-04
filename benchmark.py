@@ -1,23 +1,31 @@
+from contextlib import contextmanager
 import json
 import logging
 import os
 import subprocess
 import sys
 import tempfile
+import threading
 import traceback
 import uuid
 import shlex
 import time
 from pathlib import Path
-from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from queue import Queue
 from threading import Thread
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Dict, Generic, List, Literal, NotRequired, Optional, Tuple, TypeVar, TypedDict, cast
+from typing import Any, Callable, Coroutine, Dict, Generic, Iterable, List, Literal, NotRequired, Optional, ParamSpec, Tuple, TypeVar, TypedDict, cast, override
 from fsspec import AbstractFileSystem
 from interpreter import OpenInterpreter
+from rich.spinner import Spinner
+from rich.live import Live
+from rich.console import Console, Group
+from rich.spinner import Spinner
+from rich.text import Text
+from rich.padding import Padding
 
 from utils import LocalBasedFS, change_working_dir, wrapping_offset
 import worker
@@ -140,9 +148,6 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
             with open(messages_path, "r") as f:
                 messages = json.load(f)
                 return messages
-            # with change_working_dir(worker_dir):
-            #     result = worker.run(command, prompt) # type: ignore
-            # return result
 
 
 class DockerBenchmarkRunner(BenchmarkRunner):
@@ -211,7 +216,6 @@ def run_benchmark(benchmark: TasksStore, mod: TaskSetModifier, command: OpenInte
 
 def run_task(lt: LoadedTask[Task], command: OpenInterpreterCommand, runner: BenchmarkRunner) -> TaskResult:
     zstask = lt.to_zero_shot()
-    logger.debug(f"  task {zstask['id']}: RUNNING...")
     start = datetime.now()
     try:
         messages = runner.run(lt, command, zstask["prompt"])
@@ -223,7 +227,6 @@ def run_task(lt: LoadedTask[Task], command: OpenInterpreterCommand, runner: Benc
         messages = []
     finally:
         end = datetime.now()
-        logger.debug(f"  task {zstask['id']}: {status}!")
         return {
             "task_id": zstask["id"],
             "command": command,
@@ -235,6 +238,76 @@ def run_task(lt: LoadedTask[Task], command: OpenInterpreterCommand, runner: Benc
         }
 
 
+Result = TypeVar("Result")
+
+
+class TaskDisplay(Generic[Result]):
+    def __init__(self, max_cap: int, to_start_str: Callable[[str], str], to_stop_str: Callable[[str, Result], str]):
+        self._max_cap = max_cap
+        self._to_start_str = to_start_str
+        self._to_stop_str = to_stop_str
+        self._lock = threading.Lock()
+        self._started_ids: List[Tuple[int, str]] = []
+        self._results: Dict[int, Result] = {}
+
+    def wrap[**_P](self, fn: Callable[_P, Result], ext_str: str) -> Callable[_P, Result]:
+        def wrapped_fn(*args, **kwargs):
+            ident = id(wrapped_fn)
+            self._started(ident, ext_str)
+            result = fn(*args, **kwargs)
+            self._stopped(ident, result)
+            return result
+
+        return wrapped_fn  # type: ignore
+
+    def _started(self, ident: int, ext_str: str):
+        with self._lock:
+            self._started_ids.append((ident, ext_str))
+    
+    def _stopped(self, ident: int, result):
+        with self._lock:
+            self._results[ident] = result
+    
+    def _render(self, ident: int, ext_str: str):
+        if ident not in self._results:  # not done yet!
+            return Spinner("dots", style="yellow", text=self._to_start_str(ext_str))
+        else:  # done!
+            return Text.assemble("🏁", self._to_stop_str(ext_str, self._results[ident]))
+
+    def display_until_done(self):
+        g = Group()
+        with Live(g, refresh_per_second=10) as live:
+            while True:
+                with self._lock:
+                    renderables = [Padding(self._render(ident, ext), (0, 0, 0, 2)) for ident, ext in self._started_ids]
+                    live.update(Group(*renderables))
+                    if len(self._results) == self._max_cap:
+                        break
+                time.sleep(1)
+
+
+def status_style(status: ResultStatus) -> str:
+    if status == 'correct':
+        return 'green'
+    elif status == 'unknown':
+        return 'yellow'
+    elif status == 'incorrect':
+        return 'red'
+    elif status == 'error':
+        return 'red blink'
+
+
+def status_character(status: ResultStatus) -> str:
+    if status == 'correct':
+        return '✅'
+    elif status == 'unknown':
+        return '🤷'
+    elif status == 'incorrect':
+        return '❌'
+    elif status == 'error':
+        return '❗'
+    
+
 def run_benchmark_worker_pool(benchmark: TasksStore[Task], mod: TaskSetModifier[Task], command: OpenInterpreterCommand, runner: BenchmarkRunner, n_workers: Optional[int] = None) -> List[TaskResult]:
     all_tasks = mod.modify(benchmark.get_tasks())
     task_results: List[TaskResult] = []
@@ -242,10 +315,20 @@ def run_benchmark_worker_pool(benchmark: TasksStore[Task], mod: TaskSetModifier[
     actual_n_workers = n_workers or os.cpu_count()
     with ThreadPoolExecutor(max_workers=actual_n_workers) as pool:
         logger.debug(f"Running {len(all_tasks)} tasks across {actual_n_workers} threads...")
+        d = TaskDisplay[TaskResult](
+            len(all_tasks),
+            lambda ext: f"task {ext}: ...",
+            lambda ext, r: f"task {ext}: {status_character(r['status'])}"
+        )
+
         run_task_args = [(benchmark.load_task(t), command, runner) for t in all_tasks]
-        futures = [pool.submit(run_task, *args) for args in run_task_args]
+        apps = [(d.wrap(run_task, args[0].to_zero_shot()['id']), args) for args in run_task_args]
+        futures = [pool.submit(fn, *args) for fn, args in apps]
+        
+        d.display_until_done()
         for f in as_completed(futures):
             task_results.append(f.result())
+
         logger.debug(f"Done!")
     
     return task_results
