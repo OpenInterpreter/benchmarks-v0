@@ -1,4 +1,3 @@
-from contextlib import contextmanager
 import json
 import logging
 import os
@@ -17,7 +16,7 @@ from queue import Queue
 from threading import Thread
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Callable, Coroutine, Dict, Generic, Iterable, List, Literal, NotRequired, Optional, ParamSpec, Tuple, TypeVar, TypedDict, cast, override
+from typing import Any, Callable, Dict, Generic, List, Literal, NotRequired, Optional, ParamSpec, Tuple, TypeVar, TypedDict, cast
 from fsspec import AbstractFileSystem
 from interpreter import OpenInterpreter
 from rich.spinner import Spinner
@@ -27,7 +26,7 @@ from rich.spinner import Spinner
 from rich.text import Text
 from rich.padding import Padding
 
-from utils import LocalBasedFS, change_working_dir, wrapping_offset
+from utils import LocalBasedFS, wrapping_offset
 import worker
 
 
