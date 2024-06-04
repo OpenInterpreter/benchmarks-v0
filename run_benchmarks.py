@@ -7,9 +7,9 @@ from typing import List, Optional
 
 from constants import DATASETS
 from custom import CustomTasks
-from benchmark import DockerBenchmarkRunner, OIBenchmarks, SizeOffsetModifier, TaskResult
+from benchmark import DefaultBenchmarkRunner, DockerBenchmarkRunner, ModifierPipe, OIBenchmarks, SizeOffsetModifier, TaskResult
 from commands import commands
-from gaia import GAIATasks
+from gaia import GAIAFilesOnlyModifier, GAIATasks
 
 
 def save_results(results: List[TaskResult], filepath: Path):
@@ -68,9 +68,14 @@ if __name__ == "__main__":
             {"id": "simple", "prompt": "what is 3 + 4?", "answer": "7"},
             {"id": "hard", "prompt": "who do you think you are??", "answer": "laptop"},
         ]),
-        modifier=SizeOffsetModifier(ntasks=args.ntasks, offset=args.task_offset),
+        modifier=ModifierPipe([
+            GAIAFilesOnlyModifier(),
+            SizeOffsetModifier(ntasks=args.ntasks, offset=args.task_offset)
+        ]),
+        # modifier=SizeOffsetModifier(ntasks=args.ntasks, offset=args.task_offset),
         command=commands[args.command],
-        nworkers=args.nworkers
+        nworkers=args.nworkers,
+        runner=DefaultBenchmarkRunner()
     ).run()
 
     correct_count = sum(1 for result in results if result['status'] == 'correct')

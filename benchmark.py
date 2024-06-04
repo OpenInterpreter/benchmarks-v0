@@ -9,7 +9,7 @@ import uuid
 import shlex
 import time
 from pathlib import Path
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from queue import Queue
 from threading import Thread
@@ -72,7 +72,7 @@ class LoadedTask(Generic[Task]):
     @abstractmethod
     def to_result_status(self, messages: List[LMC]) -> ResultStatus:
         raise NotImplementedError()
-    
+   
 
 class TaskSetModifier(ABC, Generic[Task]):
     @abstractmethod
@@ -80,18 +80,31 @@ class TaskSetModifier(ABC, Generic[Task]):
         ...
 
 
-class IdModifier(TaskSetModifier, Generic[Task]):
+class IdModifier(Generic[Task], TaskSetModifier[Task]):
     def modify(self, task_set: List[Task]) -> List[Task]:
         return task_set
 
 
 @dataclass
-class SizeOffsetModifier(TaskSetModifier, Generic[Task]):
+class SizeOffsetModifier(Generic[Task], TaskSetModifier[Task]):
     offset: int
     ntasks: Optional[int]
 
     def modify(self, task_set: List[Task]) -> List[Task]:
         return wrapping_offset([t for t in task_set], self.offset, self.ntasks or len(task_set))
+    
+
+@dataclass
+class ModifierPipe(Generic[Task], TaskSetModifier[Task]):
+    mods: List[TaskSetModifier[Task]]
+
+    def modify(self, task_set: List[Task]) -> List[Task]:
+        current = task_set
+        for mod in self.mods:
+            if len(current) == 0:
+                break
+            current = mod.modify(current)
+        return current
 
 
 class TasksStore(Generic[Task]):
@@ -114,11 +127,19 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
     def run(self, lt: LoadedTask, command: OpenInterpreterCommand, prompt: str) -> List[LMC]:
         with tempfile.TemporaryDirectory() as worker_dir:
             input_dir = Path(worker_dir) / Path("input")
+            output_dir = Path(worker_dir) / Path("output")
             input_dir.mkdir(parents=True, exist_ok=True)
             lt.setup_input_dir(LocalBasedFS(str(input_dir)))
-            with change_working_dir(worker_dir):
-                result = worker.run(command, prompt) # type: ignore
-            return result
+
+            command_json_str = json.dumps(command)
+            subprocess.run(["python", "-m", "worker.run", command_json_str, f"{shlex.quote(prompt)}", output_dir], cwd=worker_dir)
+            messages_path = output_dir / worker.OUTPUT_PATH
+            with open(messages_path, "r") as f:
+                messages = json.load(f)
+                return messages
+            # with change_working_dir(worker_dir):
+            #     result = worker.run(command, prompt) # type: ignore
+            # return result
 
 
 class DockerBenchmarkRunner(BenchmarkRunner):
@@ -138,7 +159,7 @@ class DockerBenchmarkRunner(BenchmarkRunner):
                 "-v", f"{input_dir}:/input", "-v", f"{output_dir}:/output",
                 "--name", container_name,
                 DockerBenchmarkRunner.WORKER_NAME,
-                command_json_str, f"{shlex.quote(prompt)}", output_dir
+                command_json_str, f"{shlex.quote(prompt)}", "/output"
             ]
             subprocess.run(dcmd, stdout=subprocess.DEVNULL)
             messages_path = Path(temp_dir) / worker.OUTPUT_PATH
@@ -216,7 +237,7 @@ def run_benchmark_worker_pool(benchmark: TasksStore[Task], mod: TaskSetModifier[
     task_results: List[TaskResult] = []
 
     actual_n_workers = n_workers or os.cpu_count()
-    with ProcessPoolExecutor(max_workers=actual_n_workers) as pool:
+    with ThreadPoolExecutor(max_workers=actual_n_workers) as pool:
         logger.debug(f"Running {len(all_tasks)} tasks across {actual_n_workers} threads...")
         run_task_args = [(benchmark.load_task(t), command, runner) for t in all_tasks]
         futures = [pool.submit(run_task, *args) for args in run_task_args]
