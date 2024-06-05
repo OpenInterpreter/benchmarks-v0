@@ -614,7 +614,7 @@ def run_benchmark_worker_pool_with_server(
             for f in as_completed(futures):
                 task_results.append(f.result())
         
-        logger.debug("Hold CTRL+C to close the server.")
+        logger.debug("Finished!  Press CTRL+C to close the server.")
         while True:
             try:
                 time.sleep(1)
