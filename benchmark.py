@@ -563,7 +563,6 @@ def run_benchmark_worker_pool_with_server(
 
     def run_task(lt: LoadedTask[Task], zs: ZeroShotTask, session: TaskSession) -> TaskResult:
         def write(b: bytes):
-            print(b, end="")
             asyncio.run(session.write(b))
 
         start = datetime.now()
