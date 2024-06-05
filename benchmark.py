@@ -137,7 +137,7 @@ class BenchmarkRunner(ABC):
 
 
 class DefaultBenchmarkRunner(BenchmarkRunner):
-    def run(self, lt: LoadedTask, command: OpenInterpreterCommand, prompt: str) -> List[LMC]:
+    def run(self, lt: LoadedTask, command: OpenInterpreterCommand, prompt: str, write) -> List[LMC]:
         with tempfile.TemporaryDirectory() as worker_dir:
             input_dir = Path(worker_dir) / Path("input")
             output_dir = Path(worker_dir) / Path("output")
@@ -145,10 +145,13 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
             lt.setup_input_dir(LocalBasedFS(str(input_dir)))
 
             command_json_str = json.dumps(command)
-            subprocess.run([
+            p = subprocess.Popen([
                 "python", "-m", "worker.run",
                 command_json_str, f"{shlex.quote(prompt)}", worker_dir, output_dir
-            ])
+            ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            while p.poll() is None and p.stdout is not None:
+                write(p.stdout.readline())
+
             messages_path = worker_dir / worker.OUTPUT_PATH
             with open(messages_path, "r") as f:
                 messages = json.load(f)
@@ -192,7 +195,7 @@ class DockerBenchmarkRunner(BenchmarkRunner):
 
 def run_benchmark(benchmark: TasksStore, mod: TaskSetModifier, command: OpenInterpreterCommand) -> List[TaskResult]:
     all_tasks = mod.modify(benchmark.get_tasks())
-    runner = DefaultBenchmarkRunner()
+    runner: BenchmarkRunner = DefaultBenchmarkRunner()
     results: List[TaskResult] = []
 
     logger.debug(f"Running {len(all_tasks)} task(s)...")
@@ -203,7 +206,7 @@ def run_benchmark(benchmark: TasksStore, mod: TaskSetModifier, command: OpenInte
 
         logger.debug(f"  Running task {zstask['id']}...")
         start = datetime.now()
-        messages  = runner.run(lt, command, zstask["prompt"])
+        messages  = runner.run(lt, command, zstask["prompt"], lambda _: None)
         end = datetime.now()
 
         status = lt.to_result_status(messages)
@@ -353,7 +356,7 @@ def run_benchmark_worker_pool(benchmark: TasksStore[Task], mod: TaskSetModifier[
 
 def run_benchmark_threaded(benchmark: TasksStore[Task], mod: TaskSetModifier, command: OpenInterpreterCommand, n_threads: int = 2) -> List[TaskResult]:
     all_tasks = mod.modify(benchmark.get_tasks())
-    runner = DefaultBenchmarkRunner()
+    runner: BenchmarkRunner = DefaultBenchmarkRunner()
     results: Queue[TaskResult] = Queue()
     threads: List[Tuple[Queue, Thread]] = []
 
@@ -369,7 +372,7 @@ def run_benchmark_threaded(benchmark: TasksStore[Task], mod: TaskSetModifier, co
             zstask = lt.to_zero_shot()
             logger.debug(f"  task {zstask['id']} on thread {thread_id}: RUNNING...")
             start = datetime.now()
-            messages = runner.run(lt, command, zstask["prompt"])
+            messages = runner.run(lt, command, zstask["prompt"], lambda _: None)
             end = datetime.now()
             status = lt.to_result_status(task)
             logger.debug(f"  task {zstask['id']} on thread {thread_id}: DONE!")
