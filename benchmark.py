@@ -150,8 +150,7 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
                 command_json_str, f"{shlex.quote(prompt)}", worker_dir, output_dir
             ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             while p.poll() is None and p.stdout is not None:
-                line = p.stdout.readline()
-                write(line)
+                write(p.stdout.read())
 
             messages_path = worker_dir / worker.OUTPUT_PATH
             with open(messages_path, "r") as f:
@@ -182,7 +181,7 @@ class DockerBenchmarkRunner(BenchmarkRunner):
             # subprocess.run(dcmd, stdout=subprocess.DEVNULL)
             p = subprocess.Popen(dcmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             while p.poll() is None and p.stdout is not None:
-                write(p.stdout.readline())
+                write(p.stdout.read())
 
             messages_path = Path(temp_dir) / worker.OUTPUT_PATH
             if not messages_path.exists():
@@ -475,7 +474,8 @@ class TaskSession:
         Assumes this thread has access to self._lock.
         """
         try:
-            await ws.send_bytes(b)
+            await ws.send_text(b.decode("utf-8"))
+            # await ws.send_bytes(b)
             return False
         except (WebSocketDisconnect, RuntimeError):
             return True
@@ -504,7 +504,6 @@ class TaskSession:
         with self._lock:
             for b in bs:
                 self._history.append(b)
-            print("writing?", bs)
             await self._broadcast(bs)
 
 
@@ -533,7 +532,6 @@ def run_benchmark_worker_pool_with_server(
         rnnr: BenchmarkRunner,
         nworkers: int | None = None
     ) -> List[TaskResult]:
-    # print("setting up benchmark runner!")
 
     app = FastAPI()
     templates = Jinja2Templates("templates")
@@ -564,11 +562,9 @@ def run_benchmark_worker_pool_with_server(
             await asyncio.sleep(1)
 
     def run_task(lt: LoadedTask[Task], zs: ZeroShotTask, session: TaskSession) -> TaskResult:
-        # print("at top of run_task!")
         def write(b: bytes):
-            # loop.call_soon_threadsafe(session.write, b)
-            asyncio.run(session.write(b))  # might not work because there might be another event loop running in this thread (though I don't think there is.)
-        # p = subprocess.Popen([], stdout=subprocess.PIPE, stdin=subprocess.STDOUT)
+            print(b, end="")
+            asyncio.run(session.write(b))
 
         start = datetime.now()
         try:
@@ -620,6 +616,13 @@ def run_benchmark_worker_pool_with_server(
             # just do it all in one go!
             for f in as_completed(futures):
                 task_results.append(f.result())
+        
+        logger.debug("Hold CTRL+C to close the server.")
+        while True:
+            try:
+                time.sleep(1)
+            except KeyboardInterrupt:
+                break
 
     return task_results
 

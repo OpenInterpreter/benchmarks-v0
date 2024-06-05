@@ -64,11 +64,11 @@ if __name__ == "__main__":
     print("output file:", save_path)
 
     results = OIBenchmarks(
-        # tasks=CustomTasks.from_list([
-        #     {"id": "simple", "prompt": "what is 3 + 4?", "answer": "7"},
-        #     {"id": "hard", "prompt": "who do you think you are??", "answer": "laptop"},
-        # ]),
-        tasks=GAIATasks(),
+        tasks=CustomTasks.from_list([
+            {"id": "simple", "prompt": "what is 3 + 4?", "answer": "7"},
+            {"id": "hard", "prompt": "who do you think you are??", "answer": "laptop"},
+        ]),
+        # tasks=GAIATasks(),
         modifier=ModifierPipe([
             # GAIAFilesOnlyModifier(),
             SizeOffsetModifier(ntasks=args.ntasks, offset=args.task_offset)
