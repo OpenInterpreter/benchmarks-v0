@@ -150,7 +150,7 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
                 command_json_str, f"{shlex.quote(prompt)}", worker_dir, output_dir
             ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             while p.poll() is None and p.stdout is not None:
-                write(p.stdout.read())
+                write(p.stdout.readline())
 
             messages_path = worker_dir / worker.OUTPUT_PATH
             with open(messages_path, "r") as f:
@@ -181,7 +181,7 @@ class DockerBenchmarkRunner(BenchmarkRunner):
             # subprocess.run(dcmd, stdout=subprocess.DEVNULL)
             p = subprocess.Popen(dcmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             while p.poll() is None and p.stdout is not None:
-                write(p.stdout.read())
+                write(p.stdout.readline())
 
             messages_path = Path(temp_dir) / worker.OUTPUT_PATH
             if not messages_path.exists():
@@ -595,12 +595,10 @@ def run_benchmark_worker_pool_with_server(
         lambda ext:
             Spinner("dots", style="yellow", text=
                 Text(f"task ")
-                    # .append(ext, style=f"link http://{host}:{port}/view/{ext}")
                     .append(f"http://{host}:{port}/view/{ext}")
                     .append(": ...")),
         lambda ext, r:
             Text(f"🏁 task ")
-                # .append(ext, style=f"link http://{host}:{port}/view/{ext}")
                 .append(f"http://{host}:{port}/view/{ext}")
                 .append(f": {status_character(r['status'])}")
     )

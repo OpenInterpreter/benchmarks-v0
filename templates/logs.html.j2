@@ -10,16 +10,29 @@
         <div id="terminal"></div>
         <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
         <script>
-            const terminal = new Terminal({ convertEol: true });
+            const terminal = new Terminal({ convertEol: true, rendererType: 'webgl', cursorBlink: false });
             terminal.open(document.getElementById('terminal'));
             const ws = new WebSocket("{{ url_for("logs", task_id=task_id) }}")
+
+            /*
             ws.onmessage = (event) => {
-                const logs_el = document.getElementById('logs')
                 terminal.write(event.data)
-                // event.data.text().then((txt) => {
-                //     terminal.write(txt)
-                // })
             }
+            */
+
+            let buffer = '';
+            const flushInterval = 100;
+
+            setInterval(() => {
+                if (buffer) {
+                    terminal.write(buffer)
+                    buffer = ''
+                }
+            }, flushInterval);
+
+            ws.onmessage = (event) => {
+                buffer += event.data
+            };
         </script>
     </body>
 </html>
