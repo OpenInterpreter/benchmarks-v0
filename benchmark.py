@@ -150,8 +150,9 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
                 command_json_str, f"{shlex.quote(prompt)}", worker_dir, output_dir
             ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             while p.poll() is None and p.stdout is not None:
-                print("wrigint?")
-                write(p.stdout.readline())
+                line = p.stdout.readline()
+                print("wrigint?", line)
+                write(line)
 
             messages_path = worker_dir / worker.OUTPUT_PATH
             with open(messages_path, "r") as f:
