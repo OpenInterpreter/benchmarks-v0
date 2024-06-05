@@ -60,3 +60,8 @@ class GAIATasks(TasksStore[GAIATask]):
         
     def load_task(self, task: GAIATask) -> LoadedTask[GAIATask]:
         return LoadedGAIATask(task)
+
+
+class GAIAFilesOnlyModifier(TaskSetModifier[GAIATask]):
+    def modify(self, task_set: List[GAIATask]) -> List[GAIATask]:
+        return [t for t in task_set if t["file_name"] != ""]
