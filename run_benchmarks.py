@@ -7,9 +7,9 @@ from typing import List, Optional
 
 from constants import DATASETS
 from custom import CustomTasks
-from benchmark import DockerBenchmarkRunner, OIBenchmarks, SizeOffsetModifier, TaskResult
+from benchmark import DefaultBenchmarkRunner, DockerBenchmarkRunner, ModifierPipe, OIBenchmarks, SizeOffsetModifier, TaskResult
 from commands import commands
-from gaia import GAIATasks
+from gaia import GAIAFilesOnlyModifier, GAIATasks
 
 
 def save_results(results: List[TaskResult], filepath: Path):
@@ -37,6 +37,7 @@ class ArgumentsNamespace(argparse.Namespace):
     ntasks: Optional[int]
     task_offset: int
     nworkers: Optional[int]
+    server: bool
 
 
 if __name__ == "__main__":
@@ -49,6 +50,7 @@ if __name__ == "__main__":
     parser.add_argument("-nt", "--ntasks", action="store", type=int)
     parser.add_argument("-nw", "--nworkers", action="store", type=int)
     parser.add_argument("-to", "--task-offset", action="store", type=int, default=0)
+    parser.add_argument("-s", "--server", action="store_true")
     args = parser.parse_args(namespace=ArgumentsNamespace())
 
     if args.list:
@@ -64,13 +66,21 @@ if __name__ == "__main__":
     print("output file:", save_path)
 
     results = OIBenchmarks(
-        tasks=CustomTasks.from_list([
-            {"id": "simple", "prompt": "what is 3 + 4?", "answer": "7"},
-            {"id": "hard", "prompt": "who do you think you are??", "answer": "laptop"},
+        # tasks=CustomTasks.from_list([
+        #     {"id": "simple", "prompt": "what is 3 + 4?", "answer": "7"},
+        #     {"id": "hard", "prompt": "who do you think you are??", "answer": "laptop"},
+        # ]),
+        tasks=GAIATasks(),
+        modifier=ModifierPipe([
+            # GAIAFilesOnlyModifier(),
+            SizeOffsetModifier(ntasks=args.ntasks, offset=args.task_offset)
         ]),
-        modifier=SizeOffsetModifier(ntasks=args.ntasks, offset=args.task_offset),
+        # modifier=SizeOffsetModifier(ntasks=args.ntasks, offset=args.task_offset),
         command=commands[args.command],
-        nworkers=args.nworkers
+        nworkers=args.nworkers,
+        # runner=DefaultBenchmarkRunner()
+        runner=DockerBenchmarkRunner(),
+        server=args.server
     ).run()
 
     correct_count = sum(1 for result in results if result['status'] == 'correct')

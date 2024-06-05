@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>task {{ task_id }}</title>
+        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css" />
+    </head>
+    <body>
+        <h1>Task {{ task_id }}</h1>
+        
+        <div id="terminal"></div>
+        <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
+        <script>
+            const terminal = new Terminal({ convertEol: true, rendererType: 'webgl', cursorBlink: false });
+            terminal.open(document.getElementById('terminal'));
+            const ws = new WebSocket("{{ url_for("logs", task_id=task_id) }}")
+
+            /*
+            ws.onmessage = (event) => {
+                terminal.write(event.data)
+            }
+            */
+
+            let buffer = '';
+            const flushInterval = 100;
+
+            setInterval(() => {
+                if (buffer) {
+                    terminal.write(buffer)
+                    buffer = ''
+                }
+            }, flushInterval);
+
+            ws.onmessage = (event) => {
+                buffer += event.data
+            };
+        </script>
+    </body>
+</html>
