@@ -586,7 +586,7 @@ def run_benchmark_worker_pool_with_server(
                 "status": status
             }
         
-    config = uvicorn.Config(app, log_level="error")
+    config = uvicorn.Config(app, log_level="info")
     host, port = config.host, config.port
     server = Server(config=config)
 
