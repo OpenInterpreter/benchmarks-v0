@@ -151,7 +151,6 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
             ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             while p.poll() is None and p.stdout is not None:
                 line = p.stdout.readline()
-                print("wrigint?", line)
                 write(line)
 
             messages_path = worker_dir / worker.OUTPUT_PATH
@@ -505,6 +504,7 @@ class TaskSession:
         with self._lock:
             for b in bs:
                 self._history.append(b)
+            print("writing?", bs)
             await self._broadcast(bs)
 
 
