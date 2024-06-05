@@ -231,7 +231,7 @@ def run_task(lt: LoadedTask[Task], command: OpenInterpreterCommand, runner: Benc
     zstask = lt.to_zero_shot()
     start = datetime.now()
     try:
-        messages = runner.run(lt, command, zstask["prompt"])
+        messages = runner.run(lt, command, zstask["prompt"], lambda _: None)
         status = lt.to_result_status(messages)
     except Exception as e:
         logger.debug(f"  task {zstask['id']}: EXCEPTION!")
@@ -304,7 +304,7 @@ class TaskDisplay(Generic[Result]):
                     if len(self._results) == self._max_cap:
                         break
                 time.sleep(1)
-
+    
 
 def status_style(status: ResultStatus) -> str:
     if status == 'correct':
@@ -328,6 +328,21 @@ def status_character(status: ResultStatus) -> str:
         return '❗'
     
 
+def make_default_task_display(all_tasks: List[LoadedTask], make_label: Callable[[str], str]) -> TaskDisplay[TaskResult]:
+    return TaskDisplay[TaskResult](
+        len(all_tasks),
+        lambda ext:
+            Spinner("dots", style="yellow", text=
+                Text(f"task ")
+                    .append(make_label(ext))
+                    .append(": ...")),
+        lambda ext, r:
+            Text(f"🏁 task ")
+                .append(make_label(ext))
+                .append(f": {status_character(r['status'])}")
+    )
+    
+
 def run_benchmark_worker_pool(benchmark: TasksStore[Task], mod: TaskSetModifier[Task], command: OpenInterpreterCommand, runner: BenchmarkRunner, n_workers: Optional[int] = None) -> List[TaskResult]:
     all_tasks = mod.modify(benchmark.get_tasks())
     task_results: List[TaskResult] = []
@@ -335,11 +350,7 @@ def run_benchmark_worker_pool(benchmark: TasksStore[Task], mod: TaskSetModifier[
     actual_n_workers = n_workers or os.cpu_count()
     with ThreadPoolExecutor(max_workers=actual_n_workers) as pool:
         logger.debug(f"Running {len(all_tasks)} tasks across {actual_n_workers} threads...")
-        d = TaskDisplay[TaskResult](
-            len(all_tasks),
-            lambda ext: Text(f"task {ext}: ..."),
-            lambda ext, r: Text(f"task {ext}: {status_character(r['status'])}")
-        )
+        d = make_default_task_display([benchmark.load_task(t) for t in all_tasks], lambda ext: ext)
 
         run_task_args = [(benchmark.load_task(t), command, runner) for t in all_tasks]
         apps = [(d.wrap(run_task, args[0].to_zero_shot()['id']), args) for args in run_task_args]
@@ -590,18 +601,7 @@ def run_benchmark_worker_pool_with_server(
     host, port = config.host, config.port
     server = Server(config=config)
 
-    td = TaskDisplay[TaskResult](
-        len(all_tasks),
-        lambda ext:
-            Spinner("dots", style="yellow", text=
-                Text(f"task ")
-                    .append(f"http://{host}:{port}/view/{ext}")
-                    .append(": ...")),
-        lambda ext, r:
-            Text(f"🏁 task ")
-                .append(f"http://{host}:{port}/view/{ext}")
-                .append(f": {status_character(r['status'])}")
-    )
+    td = make_default_task_display(all_tasks, lambda ext: f"http://{host}:{port}/view/{ext}")
 
     with server.run_in_thread(), ThreadPoolExecutor(max_workers=nworkers) as pool:
         args_list = [(lt, zs, tasks_map[zs["id"]]) for lt, zs in zs_tasks]
@@ -631,8 +631,12 @@ class OIBenchmarks:
     runner: BenchmarkRunner = field(default_factory=DockerBenchmarkRunner)
     modifier: TaskSetModifier = field(default_factory=IdModifier)
     nworkers: Optional[int] = None
+    server: bool = False
 
     def run(self) -> List[TaskResult]:
         # results = run_benchmark_worker_pool(self.tasks, self.modifier, self.command, self.runner, self.nworkers)
-        results = run_benchmark_worker_pool_with_server(self.tasks, self.modifier, self.command, self.runner, self.nworkers)
+        if self.server:
+            results = run_benchmark_worker_pool_with_server(self.tasks, self.modifier, self.command, self.runner, self.nworkers)
+        else:
+            results = run_benchmark_worker_pool(self.tasks, self.modifier, self.command, self.runner, self.nworkers)
         return results

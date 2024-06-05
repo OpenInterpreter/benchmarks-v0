@@ -37,6 +37,7 @@ class ArgumentsNamespace(argparse.Namespace):
     ntasks: Optional[int]
     task_offset: int
     nworkers: Optional[int]
+    server: bool
 
 
 if __name__ == "__main__":
@@ -49,6 +50,7 @@ if __name__ == "__main__":
     parser.add_argument("-nt", "--ntasks", action="store", type=int)
     parser.add_argument("-nw", "--nworkers", action="store", type=int)
     parser.add_argument("-to", "--task-offset", action="store", type=int, default=0)
+    parser.add_argument("-s", "--server", action="store_true")
     args = parser.parse_args(namespace=ArgumentsNamespace())
 
     if args.list:
@@ -77,7 +79,8 @@ if __name__ == "__main__":
         command=commands[args.command],
         nworkers=args.nworkers,
         # runner=DefaultBenchmarkRunner()
-        runner=DockerBenchmarkRunner()
+        runner=DockerBenchmarkRunner(),
+        server=args.server
     ).run()
 
     correct_count = sum(1 for result in results if result['status'] == 'correct')
