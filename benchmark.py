@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import os
@@ -9,6 +10,8 @@ import traceback
 import uuid
 import shlex
 import time
+import uvicorn
+from contextlib import contextmanager
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -16,12 +19,15 @@ from queue import Queue
 from threading import Thread
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Callable, Dict, Generic, List, Literal, NotRequired, Optional, ParamSpec, Tuple, TypeVar, TypedDict, cast
+from typing import Any, Callable, Dict, Generic, List, Literal, NotRequired, Optional, ParamSpec, Set, Tuple, TypeVar, TypedDict, cast
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from fsspec import AbstractFileSystem
 from interpreter import OpenInterpreter
 from rich.spinner import Spinner
 from rich.live import Live
-from rich.console import Console, Group
+from rich.console import Console, Group, RenderableType
 from rich.spinner import Spinner
 from rich.text import Text
 from rich.padding import Padding
@@ -126,7 +132,7 @@ class TasksStore(Generic[Task]):
 
 class BenchmarkRunner(ABC):
     @abstractmethod
-    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, prompt: str) -> List[LMC]:
+    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, prompt: str, write: Callable[[bytes], None] = lambda _: None) -> List[LMC]:
         ...
 
 
@@ -152,7 +158,7 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
 class DockerBenchmarkRunner(BenchmarkRunner):
     WORKER_NAME = "worker"
 
-    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, prompt: str) -> List[LMC]:
+    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, prompt: str, write) -> List[LMC]:
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / Path("output")
             input_dir = Path(temp_dir) / Path("input")
@@ -168,7 +174,12 @@ class DockerBenchmarkRunner(BenchmarkRunner):
                 DockerBenchmarkRunner.WORKER_NAME,
                 command_json_str, f"{shlex.quote(prompt)}", "/", "/output"
             ]
-            subprocess.run(dcmd, stdout=subprocess.DEVNULL)
+
+            # subprocess.run(dcmd, stdout=subprocess.DEVNULL)
+            p = subprocess.Popen(dcmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            while p.poll() is None and p.stdout is not None:
+                write(p.stdout.readline())
+
             messages_path = Path(temp_dir) / worker.OUTPUT_PATH
             if not messages_path.exists():
                 # this will happen if (for example) the container is stopped before it finishes.
@@ -242,7 +253,12 @@ _P = ParamSpec("_P")
 
 
 class TaskDisplay(Generic[Result]):
-    def __init__(self, max_cap: int, to_start_str: Callable[[str], str], to_stop_str: Callable[[str, Result], str]):
+    def __init__(
+            self,
+            max_cap: int,
+            to_start_str: Callable[[str], RenderableType],
+            to_stop_str: Callable[[str, Result], RenderableType]
+        ):
         self._max_cap = max_cap
         self._to_start_str = to_start_str
         self._to_stop_str = to_stop_str
@@ -268,15 +284,16 @@ class TaskDisplay(Generic[Result]):
         with self._lock:
             self._results[ident] = result
     
-    def _render(self, ident: int, ext_str: str):
+    def _render(self, ident: int, ext_str: str) -> RenderableType:
         if ident not in self._results:  # not done yet!
-            return Spinner("dots", style="yellow", text=self._to_start_str(ext_str))
+            return self._to_start_str(ext_str)
         else:  # done!
-            return Text.assemble("🏁", self._to_stop_str(ext_str, self._results[ident]))
+            return self._to_stop_str(ext_str, self._results[ident])
 
     def display_until_done(self):
         g = Group()
-        with Live(g, refresh_per_second=10) as live:
+        console = Console()
+        with Live(g, console=console) as live:
             while True:
                 with self._lock:
                     renderables = [Padding(self._render(ident, ext), (0, 0, 0, 2)) for ident, ext in self._started_ids]
@@ -317,8 +334,8 @@ def run_benchmark_worker_pool(benchmark: TasksStore[Task], mod: TaskSetModifier[
         logger.debug(f"Running {len(all_tasks)} tasks across {actual_n_workers} threads...")
         d = TaskDisplay[TaskResult](
             len(all_tasks),
-            lambda ext: f"task {ext}: ...",
-            lambda ext, r: f"task {ext}: {status_character(r['status'])}"
+            lambda ext: Text(f"task {ext}: ..."),
+            lambda ext, r: Text(f"task {ext}: {status_character(r['status'])}")
         )
 
         run_task_args = [(benchmark.load_task(t), command, runner) for t in all_tasks]
@@ -424,14 +441,180 @@ Did the student get the answer correct?
 
     """.strip()
     
-    judge_msgs = cast(List[LMC], judge.chat(q, display=False))
-    assert len(judge_msgs) > 0, "the judge is speechless!"
+    try:
+        judge_msgs = cast(List[LMC], judge.chat(q, display=False))
+        assert len(judge_msgs) > 0, "the judge is speechless!"
 
-    judge_result = judge_msgs[0]["content"].strip().lower()
-    assert judge_result in {"correct", "incorrect", "unknown", "error"}, f"the judge's response was unexpected! response: {judge_result}"
+        judge_result = judge_msgs[0]["content"].strip().lower()
+        assert judge_result in {"correct", "incorrect", "unknown", "error"}, f"the judge's response was unexpected! response: {judge_result}"
+    finally:
+        judge.computer.terminate()
 
-    judge.computer.terminate()
     return judge_result  # type: ignore
+
+
+class TaskSession:
+    def __init__(self):
+        self._history = bytearray()
+        self._websockets: Set[WebSocket] = set()
+        self._lock = threading.Lock()
+
+    def is_connected(self, ws: WebSocket):
+        with self._lock:
+            return ws in self._websockets
+    
+    async def _send_bytes_to(self, ws: WebSocket, b: bytes) -> bool:
+        """
+        Returns True if the websocket has been disconnected from.
+        Returns False otherwise.
+
+        Assumes this thread has access to self._lock.
+        """
+        try:
+            await ws.send_bytes(b)
+            return False
+        except (WebSocketDisconnect, RuntimeError):
+            return True
+    
+    async def _broadcast(self, bs: bytes):
+        # Assumes this thread has access to self._lock.
+        to_remove = set()
+        for ws in self._websockets:
+            should_remove = await self._send_bytes_to(ws, bs)
+            if should_remove:
+                to_remove.add(ws)
+        for ws in to_remove:
+            self.remove_websocket(ws)
+
+
+    async def add_websocket(self, ws: WebSocket):
+        with self._lock:
+            # does the following line need access to the lock?
+            self._websockets.add(ws)
+            await self._send_bytes_to(ws, self._history)
+
+    def remove_websocket(self, ws: WebSocket):
+        self._websockets.remove(ws)
+
+    async def write(self, bs: bytes):
+        with self._lock:
+            for b in bs:
+                self._history.append(b)
+            await self._broadcast(bs)
+
+
+# yoinked from https://stackoverflow.com/questions/61577643/python-how-to-use-fastapi-and-uvicorn-run-without-blocking-the-thread.
+class Server(uvicorn.Server):
+    def install_signal_handlers(self):
+        pass
+
+    @contextmanager
+    def run_in_thread(self):
+        thread = threading.Thread(target=self.run)
+        thread.start()
+        try:
+            while not self.started:
+                time.sleep(1e-3)
+            yield
+        finally:
+            self.should_exit = True
+            thread.join()
+
+
+def run_benchmark_worker_pool_with_server(
+        tasks: TasksStore[Task],
+        mod: TaskSetModifier[Task],
+        cmd: OpenInterpreterCommand,
+        rnnr: BenchmarkRunner,
+        nworkers: int | None = None
+    ) -> List[TaskResult]:
+    # print("setting up benchmark runner!")
+
+    app = FastAPI()
+    templates = Jinja2Templates("templates")
+
+    @app.get("/view/{task_id}", response_class=HTMLResponse)
+    async def view(request: Request, task_id: str):
+        return templates.TemplateResponse(
+            request,
+            name="logs.html.j2",
+            context={"task_id": task_id})
+    
+    all_tasks = [tasks.load_task(t) for t in mod.modify(tasks.get_tasks())]
+    zs_tasks = [(t, t.to_zero_shot()) for t in all_tasks]
+    tasks_map = {zst["id"]: TaskSession() for _, zst in zs_tasks}
+
+    results_lock = threading.Lock()
+    task_results: List[TaskResult] = []
+
+    @app.websocket("/logs/{task_id}")
+    async def logs(websocket: WebSocket, task_id: str):
+        await websocket.accept()
+        session = tasks_map[task_id]
+        await session.add_websocket(websocket)
+        while session.is_connected(websocket):
+            with results_lock:
+                if len(task_results) == len(all_tasks):
+                    break
+            await asyncio.sleep(1)
+
+    def run_task(lt: LoadedTask[Task], zs: ZeroShotTask, session: TaskSession) -> TaskResult:
+        # print("at top of run_task!")
+        def write(b: bytes):
+            # loop.call_soon_threadsafe(session.write, b)
+            asyncio.run(session.write(b))  # might not work because there might be another event loop running in this thread (though I don't think there is.)
+        # p = subprocess.Popen([], stdout=subprocess.PIPE, stdin=subprocess.STDOUT)
+
+        start = datetime.now()
+        try:
+            messages = rnnr.run(lt, cmd, zs["prompt"], write)
+            status = lt.to_result_status(messages)
+        except Exception as e:
+            logger.debug(f"  task {zs['id']}: EXCEPTION!")
+            logger.debug(traceback.print_exc(file=sys.stdout))
+            status = "error"
+            messages = []
+        finally:
+            end = datetime.now()
+            return {
+                "task_id": zs["id"],
+                "command": cmd,
+                "prompt": zs["prompt"],
+                "start": start,
+                "end": end,
+                "messages": messages,
+                "status": status
+            }
+        
+    config = uvicorn.Config(app, log_level="error")
+    host, port = config.host, config.port
+    server = Server(config=config)
+
+    td = TaskDisplay[TaskResult](
+        len(all_tasks),
+        lambda ext:
+            Spinner("dots", style="yellow", text=
+                Text(f"task ")
+                    .append(ext, style=f"link http://{host}:{port}/view/{ext}")
+                    .append(": ...")),
+        lambda ext, r:
+            Text(f"🏁 task ")
+                .append(ext, style=f"link http://{host}:{port}/view/{ext}")
+                .append(f": {status_character(r['status'])}")
+    )
+
+    with server.run_in_thread(), ThreadPoolExecutor(max_workers=nworkers) as pool:
+        args_list = [(lt, zs, tasks_map[zs["id"]]) for lt, zs in zs_tasks]
+        futures = [pool.submit(td.wrap(run_task, args[1]["id"]), *args) for args in args_list]
+
+        td.display_until_done()
+
+        with results_lock:
+            # just do it all in one go!
+            for f in as_completed(futures):
+                task_results.append(f.result())
+
+    return task_results
 
 
 @dataclass
@@ -443,5 +626,6 @@ class OIBenchmarks:
     nworkers: Optional[int] = None
 
     def run(self) -> List[TaskResult]:
-        results = run_benchmark_worker_pool(self.tasks, self.modifier, self.command, self.runner, self.nworkers)
+        # results = run_benchmark_worker_pool(self.tasks, self.modifier, self.command, self.runner, self.nworkers)
+        results = run_benchmark_worker_pool_with_server(self.tasks, self.modifier, self.command, self.runner, self.nworkers)
         return results
