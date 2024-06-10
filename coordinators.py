@@ -561,6 +561,9 @@ def run_benchmark_worker_pool_with_server(
                 time.sleep(1)
         except KeyboardInterrupt:
             ...
+        
+        logger.debug("exiting server...")
+    logger.debug("exited!")
 
     return task_results
 
