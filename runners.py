@@ -85,7 +85,7 @@ class DockerBenchmarkRunner(BenchmarkRunner):
                 "-v", f"{input_dir}:/input", "-v", f"{output_dir}:/output",
                 "--name", container_name,
                 DockerBenchmarkRunner.WORKER_NAME,
-                command_json_str, f"{shlex.quote(zs["prompt"])}", "/", "/output"
+                command_json_str, f"{shlex.quote(zs['prompt'])}", "/", "/output"
             ]
 
             p = subprocess.Popen(dcmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
