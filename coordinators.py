@@ -407,6 +407,7 @@ def run_background_server(app: FastAPI):
         yield
     finally:
         loop.call_soon_threadsafe(shutdown_event.set)
+        logger.debug("about to join threads")
         th.join()
 
 
