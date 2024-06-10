@@ -463,7 +463,7 @@ def run_benchmark_worker_pool_with_server(
         await websocket.accept()
         await task_managers[task_id].add(websocket)
         await task_managers[task_id].wait_until_disconnect(websocket)
-        await websocket.close()
+        # await websocket.close()
     
     @app.post("/stop/{task_id}")
     async def stop(task_id: str) -> bool:
@@ -483,7 +483,7 @@ def run_benchmark_worker_pool_with_server(
         await websocket.accept()
         await updates_manager.add(websocket)
         await updates_manager.wait_until_disconnect(websocket)
-        await websocket.close()
+        # await websocket.close()
    
     def run_task(lt: LoadedTask, zs: ZeroShotTask, ws_manager: WebSocketsManager, log: Callable[[str], None]) -> TaskResult:
         def write(b: bytes):
