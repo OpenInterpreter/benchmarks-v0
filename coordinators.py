@@ -409,6 +409,7 @@ def run_background_server(app: FastAPI):
         loop.call_soon_threadsafe(shutdown_event.set)
         logger.debug("about to join threads")
         th.join()
+        logger.debug("joined!")
 
 
 class TaskStartedPayload(TypedDict):
