@@ -3,9 +3,7 @@ import asyncio.subprocess
 import json
 import logging
 import os
-import sys
 import threading
-import traceback
 import uuid
 import time
 import uvicorn
@@ -24,12 +22,6 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from interpreter import OpenInterpreter
 from commands import OpenInterpreterCommand
-from rich.spinner import Spinner
-from rich.live import Live
-from rich.console import Console, Group, RenderableType
-from rich.spinner import Spinner
-from rich.text import Text
-from rich.padding import Padding
 
 from modifiers import IdModifier, TaskSetModifier
 from runners import BenchmarkRunner, DockerBenchmarkRunner
@@ -137,7 +129,8 @@ def run_task(lt: LoadedTask, command: OpenInterpreterCommand, runner: BenchmarkR
         messages = runner.run(lt, command, DO_NOTHING, lambda: False, log)
         status = lt.to_result_status(messages)
     except Exception as e:
-        log(traceback.print_exc(file=sys.stdout))
+        # log(traceback.print_exc(file=sys.stdout))
+        log(str(e))
         status = "error"
         messages = []
     finally:
@@ -501,11 +494,11 @@ def run_benchmark_worker_pool_with_server(
             messages = rnnr.run(lt, cmd, write, ws_manager.is_closed, log)
             status = lt.to_result_status(messages)
         except Exception as e:
-            tb = traceback.print_exc(file=sys.stdout)
-            if tb is not None:
-                log(tb)
-            else:
-                log(str(e))
+            # tb = traceback.print_exc(file=sys.stdout)
+            # if tb is not None:
+            #     log(tb)
+            # else:
+            log(str(e))
             status = "error"
             messages = []
         finally:
