@@ -61,7 +61,7 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
             # Hence the following line.
             write(p.stdout.read())
 
-            messages_path = worker_dir / worker.OUTPUT_PATH
+            messages_path = output_dir / worker.OUTPUT_PATH
             with open(messages_path, "r") as f:
                 messages = json.load(f)
                 return messages
