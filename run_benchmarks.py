@@ -87,6 +87,8 @@ if __name__ == "__main__":
         server=args.server
     ).run()
 
+    print("outside run!")
+
     correct_count = sum(1 for result in results if result['status'] == 'correct')
     print(f"\nNumber of correct results: {correct_count}/{len(results)}")
     save_results(results, save_path)
