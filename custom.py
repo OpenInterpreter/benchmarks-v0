@@ -11,7 +11,7 @@ from typing import List, TypedDict, cast
 import jsonschema
 import jsonschema.validators
 
-from benchmark import LMC, TasksStore, LoadedTask, ResultStatus, ZeroShotTask, judge_result
+from coordinators import LMC, TasksStore, LoadedTask, ResultStatus, ZeroShotTask, judge_result
 
 
 CUSTOM_TASK_SCHEMA = {
@@ -30,10 +30,7 @@ class CustomTask(TypedDict):
     answer: str
 
 
-@dataclass
 class LoadedCustomTask(LoadedTask[CustomTask]):
-    task: CustomTask
-
     def to_zero_shot(self) -> ZeroShotTask:
         return {"id": self.task["id"], "prompt": self.task["prompt"]}
 

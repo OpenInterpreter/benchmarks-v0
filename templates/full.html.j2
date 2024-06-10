@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>All running tasks</title>
+    </head>
+    <body>
+        <ul id="tasks">
+            {% for task_id in tasks %}
+            <li data-id="{{ task_id }}" style="margin-bottom: 1px;">
+                <span class="header">
+                    <a href="{{ url_for("view", task_id=task_id) }}">{{ task_id }}</a>:
+                    <span class="status"></span>
+                </span>
+                <ul class="logs"></ul>
+            </li>
+            {% endfor %}
+        </ul>
+        <div id="updates"></div>
+        <script>
+            const ws = new WebSocket('{{ url_for("updates") }}')
+            const updates_el = document.getElementById('updates')
+
+            const tasks_el = document.getElementById('tasks')
+            // A dictionary from task_id to { element: HTMLElement, status: HTMLElement, logs: HTMLElement }.
+            const tasks_map = {}
+            for (const el of tasks_el.children) {
+                // const sel = `li[data-id="${t}"]`
+                // const el = document.querySelector(sel)
+                const header = el.getElementsByClassName('header')[0]
+                const status = header.getElementsByClassName('status')[0]
+                const logs = el.getElementsByClassName('logs')[0]
+
+                const t = el.dataset.id
+                tasks_map[t] = { element: el, status, logs }
+            }
+
+            const status_to_text = (status) => {
+                if (status === 'correct')
+                    return '✅'
+                else if (status === 'incorrect')
+                    return '❌'
+                else if (status === 'unknown')
+                    return '🤷🏿'
+                else if (status === 'error')
+                    return '❗'
+            }
+
+            const status_to_bg_color = (status) => {
+                if (status === 'correct')
+                    return 'limegreen'
+                else if (status === 'incorrect')
+                    return 'indianred'
+                else if (status === 'unknown')
+                    return 'yellow'
+                else if (status === 'error')
+                    return 'red'
+                else
+                    return 'red'
+            }
+
+            ws.onmessage = (event) => {
+                event.data.text()
+                    .then((txt) => {
+                        const update = JSON.parse(txt)
+                        const task_entry = tasks_map[update.task_id]
+
+                        console.log(update.payload)
+                        if (update.payload.tag === 'started') {
+                            task_entry.status.innerHTML = 'running'
+                            task_entry.element.style.backgroundColor = 'cyan'
+                        } else if (update.payload.tag === 'done') {
+                            task_entry.status.innerHTML = update.payload.status
+                            task_entry.element.style.backgroundColor = status_to_bg_color(update.payload.status)
+                        } else if (update.payload.tag === 'log') {
+                            const message_el = document.createElement('li')
+                            message_el.append(update.payload.message)
+                            task_entry.logs.appendChild(message_el)
+                        }
+                    })
+            }
+        </script>
+    </body>
+</html>

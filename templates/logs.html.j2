@@ -3,23 +3,54 @@
     <head>
         <title>task {{ task_id }}</title>
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm/css/xterm.css" />
+        <style>
+            pre {
+                white-space: pre-wrap;       /* Since CSS 2.1 */
+                white-space: -moz-pre-wrap;  /* Mozilla, since 1999 */
+                white-space: -pre-wrap;      /* Opera 4-6 */
+                white-space: -o-pre-wrap;    /* Opera 7 */
+                word-wrap: break-word;       /* Internet Explorer 5.5+ */
+            }
+        </style>
     </head>
     <body>
         <h1>Task {{ task_id }}</h1>
         
+        <!-- <input id="stop" type="button" value="stop"></input> -->
         <div id="terminal"></div>
+
+        <h3>Prompt</h3>
+        <pre>{{ prompt }}</pre>
+
+        <h3>Command</h3>
+        <pre>{{ command }}</pre>
+
         <script src="https://cdn.jsdelivr.net/npm/xterm/lib/xterm.js"></script>
         <script>
-            const terminal = new Terminal({ convertEol: true, rendererType: 'webgl', cursorBlink: false });
+            const terminal = new Terminal({ convertEol: true, rendererType: 'webgl', cursorBlink: false, rows: 48 });
+            // const stop_button = document.getElementById('stop')
+
             terminal.open(document.getElementById('terminal'));
             const ws = new WebSocket("{{ url_for("logs", task_id=task_id) }}")
 
             /*
-            ws.onmessage = (event) => {
-                terminal.write(event.data)
+            stop_button.onclick = async () => {
+                const response = await fetch("{{ url_for("stop", task_id=task_id) }}", { method: 'POST' })
+                // ws.close()
+            }
+
+            ws.onclose = () => {
+                stop_button.disabled = true
             }
             */
 
+            ws.onmessage = (event) => {
+                event.data.text().then((txt) => {
+                    terminal.write(txt)
+                })
+            }
+
+            /*
             let buffer = '';
             const flushInterval = 100;
 
@@ -31,8 +62,11 @@
             }, flushInterval);
 
             ws.onmessage = (event) => {
-                buffer += event.data
+                event.data.text().then((txt) => {
+                    buffer += txt
+                })
             };
+            */
         </script>
     </body>
 </html>

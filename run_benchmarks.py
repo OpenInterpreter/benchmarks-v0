@@ -7,9 +7,11 @@ from typing import List, Optional
 
 from constants import DATASETS
 from custom import CustomTasks
-from benchmark import DefaultBenchmarkRunner, DockerBenchmarkRunner, E2BDesktopBenchmarkRunner, E2BTerminalBenchmarkRunner, ModifierPipe, OIBenchmarks, SizeOffsetModifier, TaskResult
+from runners import DefaultBenchmarkRunner, DockerBenchmarkRunner, E2BDesktopBenchmarkRunner, E2BTerminalBenchmarkRunner
+from modifiers import ModifierPipe, PredModifier, SizeOffsetModifier
+from coordinators import OIBenchmarks, TaskResult
 from commands import commands
-from gaia import GAIAFilesOnlyModifier, GAIATasks
+from gaia import GAIAFilesOnlyModifier, GAIATask, GAIATasks
 
 
 def save_results(results: List[TaskResult], filepath: Path):
@@ -71,18 +73,20 @@ if __name__ == "__main__":
         #     {"id": "hard", "prompt": "who do you think you are??", "answer": "laptop"},
         # ]),
         tasks=GAIATasks(),
-        modifier=ModifierPipe([
+        modifier=ModifierPipe[GAIATask]([
             # GAIAFilesOnlyModifier(),
+            # PredModifier(lambda t: t["task_id"] == "df6561b2-7ee5-4540-baab-5095f742716a"),  # this one is consistently getting an error.
             SizeOffsetModifier(ntasks=args.ntasks, offset=args.task_offset)
         ]),
         # modifier=SizeOffsetModifier(ntasks=args.ntasks, offset=args.task_offset),
         command=commands[args.command],
         nworkers=args.nworkers,
-        runner=E2BTerminalBenchmarkRunner(),
-        # runner=DefaultBenchmarkRunner()
+        # runner=E2BTerminalBenchmarkRunner(),
+        # runner=DefaultBenchmarkRunner(),
+        runner=DockerBenchmarkRunner(),
         server=args.server
     ).run()
 
     correct_count = sum(1 for result in results if result['status'] == 'correct')
-    print(f"Number of correct results: {correct_count}/{len(results)}")
+    print(f"\nNumber of correct results: {correct_count}/{len(results)}")
     save_results(results, save_path)

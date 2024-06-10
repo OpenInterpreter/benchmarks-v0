@@ -1,6 +1,5 @@
 import os
-from typing import Dict
-from benchmark import OpenInterpreterCommand
+from typing import Dict, NotRequired, TypedDict
 
 
 # Need to figure out how to parameterize the hostname based on the runner!
@@ -13,6 +12,17 @@ If you are asked for a number, don’t use comma to write your number neither us
 If you are asked for a string, don’t use articles, neither abbreviations (e.g. for cities), and write the digits in plain text unless specified otherwise.
 If you are asked for a comma separated list, apply the above rules depending of whether the element to be put in the list is a number or a string.
 """
+
+
+class OpenInterpreterCommand(TypedDict):
+    auto_run: NotRequired[bool]
+    os_mode: NotRequired[bool]
+    model: NotRequired[str]
+    context_window: NotRequired[int]
+    api_base: NotRequired[str]
+    api_key: NotRequired[str]
+    custom_instructions: NotRequired[str]
+    supports_functions: NotRequired[bool]
 
 
 commands: Dict[str, OpenInterpreterCommand] = {

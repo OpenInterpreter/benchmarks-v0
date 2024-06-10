@@ -5,7 +5,7 @@ from datasets import load_dataset
 from fsspec import AbstractFileSystem, filesystem
 from interpreter import OpenInterpreter
 
-from benchmark import LMC, TasksStore, LoadedTask, ResultStatus, TaskResult, TaskSetModifier, ZeroShotTask, judge_result
+from coordinators import LMC, TasksStore, LoadedTask, ResultStatus, TaskResult, TaskSetModifier, ZeroShotTask, judge_result
 from constants import DATASETS, GAIA
 from utils import copy_between_fss, wrapping_offset
 
@@ -21,10 +21,7 @@ GAIATask = TypedDict("GAIATask", {
 })
 
 
-@dataclass
 class LoadedGAIATask(LoadedTask[GAIATask]):
-    task: GAIATask
-
     def setup_input_dir(self, fs: AbstractFileSystem):
         if self.task["file_path"] == "":
             return

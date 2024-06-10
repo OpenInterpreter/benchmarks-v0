@@ -23,6 +23,7 @@ if __name__ == "__main__":
     }
 
     if len(sys.argv) != 5:
+        print("given args:\n", "\n--------\n".join(sys.argv))
         print("Usage: python -m worker.run <command:json-str> <prompt:str> <cwd:str> <output-dir:str>")
         exit(1)
 
@@ -37,6 +38,7 @@ if __name__ == "__main__":
     # grabbing the current working directory this script is to use.
     cwd = sys.argv[3]
     os.chdir(cwd)
+    print("cwd:", cwd)
 
     # grabbing output directory.
     out_dir = Path(sys.argv[4])
