@@ -582,7 +582,8 @@ class OIBenchmarks:
     def run(self) -> List[TaskResult]:
         if self.server:
             results = run_benchmark_worker_pool_with_server(self.tasks, self.modifier, self.command, self.runner, self.nworkers)
+            logger.debug("post results")
         else:
             results = run_benchmark_worker_pool(self.tasks, self.modifier, self.command, self.runner, self.nworkers)
-        print("at end of run function!")
+        logger.debug("at end of run function!")
         return results
