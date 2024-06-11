@@ -82,8 +82,8 @@ if __name__ == "__main__":
         command=commands[args.command],
         nworkers=args.nworkers,
         # runner=E2BTerminalBenchmarkRunner(),
-        runner=DefaultBenchmarkRunner(),
-        # runner=DockerBenchmarkRunner(),
+        # runner=DefaultBenchmarkRunner(),
+        runner=DockerBenchmarkRunner(),
         server=args.server
     ).run()
 
