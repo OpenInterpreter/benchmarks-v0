@@ -1,15 +1,16 @@
 import asyncio
 import asyncio.subprocess
+from io import StringIO
 import json
 import logging
 import os
 import threading
+import traceback
 import uuid
 import time
 import uvicorn
-from hypercorn.config import Config
+import hypercorn.config
 from hypercorn.asyncio import serve
-from contextlib import contextmanager
 from contextlib import contextmanager
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
@@ -20,11 +21,12 @@ from typing import Any, Callable, Any, Dict, Generic, List, Literal, Optional, P
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from uvicorn import Config
 from interpreter import OpenInterpreter
 from commands import OpenInterpreterCommand
 
 from modifiers import IdModifier, TaskSetModifier
-from runners import BenchmarkRunner, DockerBenchmarkRunner
+from runners import BenchmarkRunner, FakeBenchmarkRunner
 from task import LMC, LoadedTask, ResultStatus, TaskResult, TasksStore, ZeroShotTask
 
 
@@ -69,13 +71,13 @@ def run_benchmark(benchmark: TasksStore, mod: TaskSetModifier, command: OpenInte
     all_tasks = mod.modify(benchmark.get_tasks())
     results: List[TaskResult] = []
 
-    logger.debug(f"Running {len(all_tasks)} task(s)...")
+    # logger.debug(f"Running {len(all_tasks)} task(s)...")
 
     for task in all_tasks:
         lt = benchmark.load_task(task)
         zstask = lt.to_zero_shot()
 
-        logger.debug(f"  Running task {zstask['id']}...")
+        # logger.debug(f"  Running task {zstask['id']}...")
         start = datetime.now()
         messages  = runner.run(lt, command, DO_NOTHING, lambda: False, DO_NOTHING)
         end = datetime.now()
@@ -129,8 +131,9 @@ def run_task(lt: LoadedTask, command: OpenInterpreterCommand, runner: BenchmarkR
         messages = runner.run(lt, command, DO_NOTHING, lambda: False, log)
         status = lt.to_result_status(messages)
     except Exception as e:
-        # log(traceback.print_exc(file=sys.stdout))
-        log(str(e))
+        strio = StringIO()
+        traceback.print_exc(file=strio)
+        log(strio.getvalue())
         status = "error"
         messages = []
     finally:
@@ -168,11 +171,14 @@ def run_benchmark_worker_pool(benchmark: TasksStore, mod: TaskSetModifier, comma
         run_task_args = [(lt, command, runner, make_fs(zs["id"])) for lt, zs in zero_shots]
         apps = []
         for args in run_task_args:
-            tlc = TaskLifecycle[TaskResult]()
-            start, log, done = make_fs(args[0].to_zero_shot()['id'])
-            tlc.add_start_fn(start)
-            tlc.add_done_fn(done)
-            apps.append((tlc.wrap(run_task), (*args[:-1], log)))
+            # tlc = TaskLifecycle[TaskResult]()
+            # start, log, done = make_fs(args[0].to_zero_shot()['id'])
+            # tlc.add_start_fn(start)
+            # tlc.add_done_fn(done)
+            # apps.append((tlc.wrap(run_task), (*args[:-1], log)))
+
+            log = lambda _: None
+            apps.append((run_task, (*args[:-1], log)))
         futures = [pool.submit(fn, *args) for fn, args in apps]
         
         for f in as_completed(futures):
@@ -259,18 +265,18 @@ def judge_result(initial_prompt: str, last_msg: str, expected: str) -> ResultSta
     judge.system_message = "You are a grading AI. Answer with the single word 'correct' or 'incorrect', and do NOT answer in markdown."
     q = f"""
     
-# QUESTION:
-{initial_prompt}
-# CORRECT ANSWER:
-{expected}
----
-# STUDENT'S ANSWER:
-{last_msg}
----
+# # # QUESTION:
+# # {initial_prompt}
+# # # CORRECT ANSWER:
+# # {expected}
+# # ---
+# # # STUDENT'S ANSWER:
+# # {last_msg}
+# # ---
 
-Did the student get the answer correct?
+# # Did the student get the answer correct?
 
-    """.strip()
+# #     """.strip()
     
     try:
         judge_msgs = cast(List[LMC], judge.chat(q, display=False))
@@ -390,7 +396,7 @@ def run_background_server(app: FastAPI):
     shutdown_event = asyncio.Event()
 
     def _start_server():
-        c = Config()
+        c = hypercorn.config.Config()
         coroutine = serve(app, c, shutdown_trigger=shutdown_event.wait)  # type: ignore
         loop.run_until_complete(coroutine)  # type: ignore
 
@@ -400,7 +406,7 @@ def run_background_server(app: FastAPI):
         yield
     finally:
         loop.call_soon_threadsafe(shutdown_event.set)
-        logger.debug("about to join threads")
+        logger.debug("about to join threads -- this may take a few seconds...")
         th.join()
         logger.debug("joined!")
 
@@ -494,11 +500,9 @@ def run_benchmark_worker_pool_with_server(
             messages = rnnr.run(lt, cmd, write, ws_manager.is_closed, log)
             status = lt.to_result_status(messages)
         except Exception as e:
-            # tb = traceback.print_exc(file=sys.stdout)
-            # if tb is not None:
-            #     log(tb)
-            # else:
-            log(str(e))
+            strio = StringIO()
+            traceback.print_exc(file=strio)
+            log(strio.getvalue())
             status = "error"
             messages = []
         finally:
@@ -512,7 +516,7 @@ def run_benchmark_worker_pool_with_server(
                 "messages": messages,
                 "status": status
             }
-        
+    
     with run_background_server(app), ThreadPoolExecutor(max_workers=nworkers) as pool:
         done_event = threading.Event()
 
@@ -544,6 +548,10 @@ def run_benchmark_worker_pool_with_server(
             futures.append(pool.submit(tlc.wrap(run_task), *args))
 
         done_event.wait()
+        # deal with the futures to surface any exceptions here.
+        for f in as_completed(futures):
+            # the result was already recorded, so just call the thing.
+            f.result()
 
         for manager in task_managers.values():
             manager.close()
@@ -556,9 +564,6 @@ def run_benchmark_worker_pool_with_server(
                 time.sleep(1)
         except KeyboardInterrupt:
             ...
-        
-        logger.debug("exiting server...")
-    logger.debug("exited!")
 
     return task_results
 
@@ -567,7 +572,7 @@ def run_benchmark_worker_pool_with_server(
 class OIBenchmarks:
     tasks: TasksStore
     command: OpenInterpreterCommand
-    runner: BenchmarkRunner = field(default_factory=DockerBenchmarkRunner)
+    runner: BenchmarkRunner = field(default_factory=FakeBenchmarkRunner)
     modifier: TaskSetModifier = field(default_factory=IdModifier)
     nworkers: Optional[int] = None
     server: bool = False
@@ -575,8 +580,6 @@ class OIBenchmarks:
     def run(self) -> List[TaskResult]:
         if self.server:
             results = run_benchmark_worker_pool_with_server(self.tasks, self.modifier, self.command, self.runner, self.nworkers)
-            logger.debug("post results")
         else:
             results = run_benchmark_worker_pool(self.tasks, self.modifier, self.command, self.runner, self.nworkers)
-        logger.debug("at end of run function!")
         return results

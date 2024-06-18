@@ -3,10 +3,20 @@
     <head>
         <title>All running tasks</title>
     </head>
+    <style>
+    li {
+        margin: 0;
+        margin-bottom: 1px;
+    }
+    pre {
+        margin: 0;
+        white-space: pre-wrap;
+    }
+    </style>
     <body>
         <ul id="tasks">
             {% for task_id in tasks %}
-            <li data-id="{{ task_id }}" style="margin-bottom: 1px;">
+            <li data-id="{{ task_id }}">
                 <span class="header">
                     <a href="{{ url_for("view", task_id=task_id) }}">{{ task_id }}</a>:
                     <span class="status"></span>
@@ -73,7 +83,9 @@
                             task_entry.element.style.backgroundColor = status_to_bg_color(update.payload.status)
                         } else if (update.payload.tag === 'log') {
                             const message_el = document.createElement('li')
-                            message_el.append(update.payload.message)
+                            const pre_el = document.createElement('pre')
+                            message_el.appendChild(pre_el)
+                            pre_el.append(update.payload.message)
                             task_entry.logs.appendChild(message_el)
                         }
                     })

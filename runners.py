@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from asyncio import AbstractEventLoop
-from io import RawIOBase
+from dataclasses import dataclass
+from io import RawIOBase, StringIO
 import json
 import os
 from pathlib import Path
@@ -8,16 +8,21 @@ import shlex
 import subprocess
 from tempfile import TemporaryDirectory
 import time
-from typing import Any, Callable, List, TypeVar
+from typing import Any, Callable, List, TypeVar, cast
 from rich.console import Console
-
+from websockets import ConnectionClosed
+from websockets.sync.client import connect
+from websockets.sync.connection import Connection
 from fsspec import AbstractFileSystem
+from websocket import WebSocket
+from e2b import Sandbox, SandboxException
+from e2b_desktop import Desktop
+
+import worker
+from accumulator import Accumulator
 from commands import OpenInterpreterCommand
 from task import LMC, LoadedTask
 from utils import LocalBasedFS
-import worker
-from e2b import Sandbox
-from e2b_desktop import Desktop
 
 
 Task = TypeVar("Task")
@@ -112,6 +117,91 @@ class DockerBenchmarkRunner(BenchmarkRunner):
                 return messages
 
 
+def get_free_port():
+    # sort of cursed but its fine.
+    # basis from https://stackoverflow.com/questions/1365265/on-localhost-how-do-i-pick-a-free-port-number.
+    import socket
+    with socket.socket() as sock:
+        sock.bind(('', 0))
+        return sock.getsockname()[1]
+
+
+class FakeBenchmarkRunner(BenchmarkRunner):
+    def run(self, lt, command, write, should_stop, log) -> List[LMC]:
+        # write(b"how could you.")
+        return [{"role": "assistant", "type": "message", "content": "im sowwy."}]
+
+
+class DockerServerBenchmarkRunner(BenchmarkRunner):
+    WORKER_NAME = "server-worker"
+
+    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], should_stop: Callable[[], bool], log: Callable[[str], None]) -> List[LMC]:
+        with TemporaryDirectory() as worker_dir:
+            output_dir = Path(worker_dir) / Path("output")
+            input_dir = Path(worker_dir) / Path("input")
+            command_json_str = json.dumps(command)
+            input_dir.mkdir(parents=True, exist_ok=True)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            lt.setup_input_dir(LocalBasedFS(str(input_dir)))
+            zs = lt.to_zero_shot()
+            container_name = f"{zs['id']}_{time.time()}"
+            port = get_free_port()
+            dcmd = [
+                "docker", "run", "-t",
+                "-v", f"{input_dir}:/input", "-v", f"{output_dir}:/output",
+                "--name", container_name,
+                "-p", f"{port}:8000",
+                DockerServerBenchmarkRunner.WORKER_NAME,
+                command_json_str, "/"
+            ]
+
+            p = subprocess.Popen(dcmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
+            assert p.stdout is not None
+
+            while p.poll() is None and "Uvicorn running" not in p.stdout.readline().decode("utf-8"):
+                time.sleep(0.5)
+            
+            def is_done(msg: LMC) -> bool:
+                return (
+                    "role" in msg and msg["role"] == "server"
+                    and "type" in msg and msg["type"] == "completion"
+                    and "content" in msg and "DONE" in msg["content"]
+                )
+            
+            def recv(c: Connection, timeout: int) -> LMC | None:
+                try:
+                    return cast(LMC, json.loads(c.recv(timeout)))
+                except ConnectionClosed:
+                    return None
+
+            messages: List[LMC] = []
+
+            with connect(f"ws://localhost:{port}") as c:
+                c.send(json.dumps({"role": "user", "type": "message", "start": True}))
+                c.send(json.dumps({"role": "user", "type": "message", "content": zs["prompt"]}))
+                c.send(json.dumps({"role": "user", "type": "message", "end": True}))
+
+                timeout = 10 * 60
+                current_msg = recv(c, timeout)
+                acc = Accumulator()
+                while current_msg is not None and not is_done(current_msg):
+                    if current_msg["role"] != "server" and "content" in current_msg and isinstance(current_msg["content"], str):
+                        write(str(current_msg["content"]).encode("utf-8"))
+                    messages.append(current_msg)
+                    full_msg = acc.accumulate(current_msg)
+                    if full_msg is not None:
+                        messages.append(full_msg)
+                        acc = Accumulator()
+                    current_msg = recv(c, timeout)
+
+            # log("stopping...")
+            p.kill()
+            subprocess.run(["docker", "stop", container_name], stdout=subprocess.DEVNULL)
+            # log("stopped!")
+            
+            return messages
+
+
 class E2BFile(RawIOBase):
     def __init__(self, sandbox: Sandbox, path: os.PathLike, mode: str):
         self.sandbox = sandbox
@@ -155,30 +245,36 @@ class E2BFilesystem(AbstractFileSystem):
         return self.sandbox.filesystem.list(path)
 
 
+class WorkerRunner(ABC):
+    @abstractmethod
+    def run(self):
+        ...
+
+
 class E2BTerminalBenchmarkRunner(BenchmarkRunner):
     rc = Console()
+    limit = 18
 
     # default timeout is 10 minutes.
-    def __init__(self, timeout: int = 10 * 60 * 1000):
+    def __init__(self, wr: WorkerRunner, timeout: int = 10 * 60 * 1000):
         self._timeout = timeout
 
     def run_cmd_blocking(self, sandbox: Sandbox, cmd: str, write: Callable[[bytes], None], should_stop: Callable[[], bool], log: Callable[[str], None], display: bool = True):
         if display:
-            p = sandbox.process.start(
-                cmd,
-                on_stdout=lambda output: write(f"{output.line}\n".encode("utf-8")),
-                on_stderr=lambda output: write(f"{output.line}\n".encode("utf-8")),
-                timeout=self._timeout
-            )
-            while p.exit_code is None and not should_stop():
-                time.sleep(1)
-            if should_stop():
-                log("stopped!")
-                p.kill()
+            try:
+                p = sandbox.process.start_and_wait(
+                    cmd,
+                    on_stdout=lambda output: write(f"{output.line}\n".encode("utf-8")),
+                    on_stderr=lambda output: write(f"{output.line}\n".encode("utf-8")),
+                    timeout=self._timeout
+                )
+            except SandboxException as e:
+                print("e", str(e))
         else:
             sandbox.process.start_and_wait(cmd)
 
     def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], should_stop: Callable[[], bool], log: Callable[[str], None]) -> List[LMC]:
+        messages = []
         with Sandbox(template="worker", cwd="/") as sandbox:
             input_dir = "/input"
             output_dir = "/output"
@@ -186,6 +282,7 @@ class E2BTerminalBenchmarkRunner(BenchmarkRunner):
             sandbox.filesystem.make_dir(output_dir)
             fs = E2BFilesystem(sandbox, Path("/input"))
             lt.setup_input_dir(fs)
+
             prompt = lt.to_zero_shot()["prompt"]
             command_json_str = json.dumps(command)
             log(f"sandbox id: {sandbox.id}")
@@ -199,10 +296,108 @@ class E2BTerminalBenchmarkRunner(BenchmarkRunner):
             try:
                 messages_file = sandbox.download_file(str(Path(output_dir) / worker.OUTPUT_PATH))
                 messages_str = messages_file.decode()
-                return json.loads(messages_str)
+                messages.extend(json.loads(messages_str))
             except Exception as e:  # download file doesn't throw an exception any less generic than Exception.
                 log(str(e))
-                return []
+            finally:
+                log("closing!")
+        Sandbox.kill(sandbox_id=sandbox.id)
+        return messages
+
+
+class E2BServerTerminalBenchmarkRunner(BenchmarkRunner):
+    WORKER_NAME = "server-worker"
+
+    def __init__(self, timeout=10):
+        self._timeout = timeout
+
+    def run_cmd_blocking(self, sandbox: Sandbox, cmd: str, write: Callable[[bytes], None], should_stop: Callable[[], bool], log: Callable[[str], None], display: bool = True):
+        if display:
+            try:
+                p = sandbox.process.start_and_wait(
+                    cmd,
+                    on_stdout=lambda output: write(f"{output.line}\n".encode("utf-8")),
+                    on_stderr=lambda output: write(f"{output.line}\n".encode("utf-8")),
+                    timeout=self._timeout
+                )
+            except SandboxException as e:
+                print("e", str(e))
+        else:
+            sandbox.process.start_and_wait(cmd)
+
+    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], should_stop: Callable[[], bool], log: Callable[[str], None]) -> List[LMC]:
+        messages: List[LMC] = []
+        with Sandbox(template="server-worker", cwd="/") as sandbox:
+            input_dir = "/input"
+            output_dir = "/output"
+            sandbox.filesystem.make_dir(input_dir)
+            sandbox.filesystem.make_dir(output_dir)
+            fs = E2BFilesystem(sandbox, Path("/input"))
+            lt.setup_input_dir(fs)
+            zs = lt.to_zero_shot()
+            prompt = zs["prompt"]
+            command_json_str = json.dumps(command)
+            log(f"sandbox id: {sandbox.id}")
+
+            def is_done(msg: LMC) -> bool:
+                return (
+                    "role" in msg and msg["role"] == "server"
+                    and "type" in msg and msg["type"] == "completion"
+                    and "content" in msg and "DONE" in msg["content"]
+                )
+
+            def recv(c: Connection, timeout: int) -> LMC | None:
+                try:
+                    return cast(LMC, json.loads(c.recv(timeout)))
+                except ConnectionClosed:
+                    return None
+                
+            strio = StringIO("")
+            started = False
+
+            def write_out(s: str):
+                if not started:
+                    strio.write(s)
+                    write(s.encode("utf-8"))
+
+            p = sandbox.process.start(
+                f"sudo python -m worker.run '{command_json_str}' '/'",
+                on_stdout=lambda output: write_out(output.line),
+                on_stderr=lambda output: write_out(output.line),
+                timeout=self._timeout
+            )
+
+            while "Uvicorn running" not in strio.getvalue():
+                time.sleep(1)
+
+            started = True
+            hn = f"wss://{sandbox.get_hostname(port=8000)}"
+
+            with connect(hn, open_timeout=2 * 60) as c:
+                write(b"\n\n")
+                log(f"connected to hostname '{hn}'!")
+                c.send(json.dumps({"role": "user", "type": "message", "start": True}))
+                c.send(json.dumps({"role": "user", "type": "message", "content": prompt}))
+                c.send(json.dumps({"role": "user", "type": "message", "end": True}))
+
+                timeout = 10
+                current_msg = recv(c, timeout)
+                acc = Accumulator()
+                while current_msg is not None and not is_done(current_msg):
+                    if current_msg["role"] != "server" and "content" in current_msg and isinstance(current_msg["content"], str):
+                        write(str(current_msg["content"]).encode("utf-8"))
+                    messages.append(current_msg)
+                    full_msg = acc.accumulate(current_msg)
+                    if full_msg is not None:
+                        messages.append(full_msg)
+                        acc = Accumulator()
+                    current_msg = recv(c, timeout)
+
+            p.kill()
+            p.wait()
+
+        Sandbox.kill(sandbox_id=sandbox.id)
+        return messages
 
 
 class E2BDesktopBenchmarkRunner(BenchmarkRunner):

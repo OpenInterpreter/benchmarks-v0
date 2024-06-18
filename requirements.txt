@@ -1,6 +1,6 @@
 datasets
 jsonschema
-git+https://github.com/imapersonman/open-interpreter.git@main
+git+https://github.com/imapersonman/open-interpreter.git@sleepy-server
 fsspec
 websockets
 rich

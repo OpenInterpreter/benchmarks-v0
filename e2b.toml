@@ -1,14 +1,14 @@
 # This is a config for E2B sandbox template.
-# You can use 'template_id' (0qwufpwh66owfdikcyof) or 'template_name (worker) from this config to spawn a sandbox:
+# You can use 'template_id' (0qwufpwh66owfdikcyof) or 'template_name (server-worker) from this config to spawn a sandbox:
 
 # Python SDK
 # from e2b import Sandbox
-# sandbox = Sandbox(template='worker')
+# sandbox = Sandbox(template='server-worker')
 
 # JS SDK
 # import { Sandbox } from 'e2b'
-# const sandbox = await Sandbox.create({ template: 'worker' })
+# const sandbox = await Sandbox.create({ template: 'server-worker' })
 
-dockerfile = "Dockerfile"
-template_name = "worker"
+dockerfile = "server.Dockerfile"
+template_name = "server-worker"
 template_id = "0qwufpwh66owfdikcyof"
