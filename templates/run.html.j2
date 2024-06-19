@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>All runs</title>
+        <style>
+            li { margin-bottom: 1px; }
+            .correct { background-color: limegreen; }
+            .incorrect { background-color: indianred; }
+            .unknown { background-color: red; }
+        </style>
+    </head>
+    <body>
+        <a href="{{ url_for("runs") }}">&lt; back</a>
+        <h2>{{ run_id }}</h2>
+        <span>{{ n_correct }} / {{ total }}</span>
+        <ul id="runs">
+            {% for task in tasks %}
+            <li data-id="{{ task.task_id }}" class="{{ task.status }}">
+                <a href="{{ url_for("specific_task", run_id=run_id, task_id=task.task_id) }}">{{ task.task_id }}</a>
+            </li>
+            {% endfor %}
+        </ul>
+    </body>
+</html>

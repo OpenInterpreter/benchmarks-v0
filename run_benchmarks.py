@@ -2,10 +2,11 @@ import io
 import csv
 import argparse
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 from typing import List, Optional
 
-from constants import DATASETS
+from constants import DATASETS, RESULTS
 from custom import CustomTasks
 from runners import DefaultBenchmarkRunner, DockerBenchmarkRunner, DockerServerBenchmarkRunner, E2BDesktopBenchmarkRunner, E2BServerTerminalBenchmarkRunner, E2BTerminalBenchmarkRunner, FakeBenchmarkRunner
 from modifiers import ModifierPipe, PredModifier, SizeOffsetModifier
@@ -21,6 +22,8 @@ def save_results(results: List[TaskResult], filepath: Path):
         with io.StringIO("") as f:
             writer = csv.DictWriter(f, results[0].keys())
             writer.writeheader()
+            # I should probably convert 'command' and 'messages' column to use python dict strings at some point.
+            json_results = [{**r, "messages": json.dumps(r["messages"]), "command": json.dumps(r["command"])} for r in results]
             writer.writerows(results)
             f.seek(0)
             with open(filepath, "w") as csv_file:
@@ -45,7 +48,7 @@ class ArgumentsNamespace(argparse.Namespace):
 
 if __name__ == "__main__":
     default_command_id = ""
-    default_output_file_dir = Path(".local/results")
+    default_output_file_dir = RESULTS
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-l", "--list", action="store_true")
@@ -84,8 +87,8 @@ if __name__ == "__main__":
         command=commands[args.command],
         nworkers=args.nworkers,
         # runner=E2BTerminalBenchmarkRunner(),
-        runner=E2BServerTerminalBenchmarkRunner(),
-        # runner=DockerServerBenchmarkRunner(),
+        # runner=E2BServerTerminalBenchmarkRunner(),
+        runner=DockerServerBenchmarkRunner(),
         # runner=DefaultBenchmarkRunner(),
         # runner=DockerBenchmarkRunner(),
         # runner=FakeBenchmarkRunner(),

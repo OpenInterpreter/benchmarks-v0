@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>All runs</title>
+    </head>
+    <body>
+        <ul id="runs">
+            {% for run_id in run_files%}
+            <li data-id="{{ run_id }}">
+                <!-- <span>{{ run_id }}</span> -->
+                <a href="{{ url_for("specific_run", run_id=run_id) }}">{{ run_id }}</span>
+            </li>
+            {% endfor %}
+        </ul>
+    </body>
+</html>

@@ -380,7 +380,7 @@ class E2BServerTerminalBenchmarkRunner(BenchmarkRunner):
                 c.send(json.dumps({"role": "user", "type": "message", "content": prompt}))
                 c.send(json.dumps({"role": "user", "type": "message", "end": True}))
 
-                timeout = 10
+                timeout = 4 * 60
                 current_msg = recv(c, timeout)
                 acc = Accumulator()
                 while current_msg is not None and not is_done(current_msg):

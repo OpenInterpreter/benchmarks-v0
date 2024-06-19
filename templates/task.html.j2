@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>All runs</title>
+    </head>
+    <style>
+        li {
+            margin: 0;
+            margin-bottom: 1px;
+        }
+        pre {
+            margin: 0;
+            white-space: pre-wrap;
+        }
+    </style>
+    <body>
+        <a href="{{ url_for("specific_run", run_id=run_id) }}">&lt; back</a>
+        <h2>{{ task.task_id }}</h2>
+        <div>
+            <h3>Prompt</h3>
+            <pre>{{ task.prompt }}</pre>
+        </div>
+        <div>
+            <h3>Command</h3>
+            <pre>{{ task.command }}</pre>
+        </div>
+        <div>
+            <h3>Start</h3>
+            <pre>{{ task.start }}</pre>
+        </div>
+        <div>
+            <h3>End</h3>
+            <pre>{{ task.end }}</pre>
+        </div>
+        <div>
+            <h3>Messages</h3>
+            <div id="messages"></div>
+        </div>
+        <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+        <script>
+            const messages_el = document.getElementById("messages");
+            messages_el.innerHTML = marked.parse(`{{ task.messages }}`);
+        </script>
+    </body>
+</html>
