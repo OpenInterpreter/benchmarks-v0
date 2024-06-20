@@ -53,3 +53,6 @@ class TasksStore(Generic[Task]):
     @abstractmethod
     def load_task(self, task: Task) -> LoadedTask[Task]:
         raise NotImplementedError()
+    
+    def custom_instructions(self) -> None | str:
+        return None

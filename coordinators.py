@@ -153,6 +153,10 @@ def run_benchmark_worker_pool(benchmark: TasksStore, mod: TaskSetModifier, comma
     all_tasks = [benchmark.load_task(t) for t in mod.modify(benchmark.get_tasks())]
     task_results: List[TaskResult] = []
 
+    extra_ci = benchmark.custom_instructions()
+    if extra_ci is not None and "custom_instructions" in command:
+        command["custom_instructions"] += f"\n{extra_ci}"
+
     actual_n_workers = n_workers or os.cpu_count()
     with ThreadPoolExecutor(max_workers=actual_n_workers) as pool:
         logger.debug(f"Running {len(all_tasks)} tasks across {actual_n_workers} threads...")
@@ -455,6 +459,10 @@ def run_benchmark_worker_pool_with_server(
     zs_map = {zst["id"]: zst for _, zst in zs_tasks}
     task_managers = {zst["id"]: WebSocketsManager() for _, zst in zs_tasks}
     updates_manager = WebSocketsManager()
+
+    extra_ci = tasks.custom_instructions()
+    if extra_ci is not None and "custom_instructions" in cmd:
+        cmd["custom_instructions"] += f"\n{extra_ci}"
 
     @app.get("/view/{task_id}", response_class=HTMLResponse)
     async def view(request: Request, task_id: str):

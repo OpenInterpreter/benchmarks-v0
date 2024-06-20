@@ -14,7 +14,7 @@
     }
     </style>
     <body>
-        <ul id="tasks">
+        <ol id="tasks">
             {% for task_id in tasks %}
             <li data-id="{{ task_id }}">
                 <span class="header">
@@ -24,7 +24,7 @@
                 <ul class="logs"></ul>
             </li>
             {% endfor %}
-        </ul>
+        </ol>
         <div id="updates"></div>
         <script>
             const ws = new WebSocket('{{ url_for("updates") }}')

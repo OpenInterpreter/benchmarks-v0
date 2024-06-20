@@ -13,6 +13,7 @@ from modifiers import ModifierPipe, PredModifier, SizeOffsetModifier
 from coordinators import OIBenchmarks, TaskResult
 from commands import commands
 from gaia import GAIAFilesOnlyModifier, GAIATask, GAIATasks
+from swe_bench import SWEBench
 
 
 def save_results(results: List[TaskResult], filepath: Path):
@@ -73,7 +74,8 @@ if __name__ == "__main__":
     print("output file:", save_path)
 
     results = OIBenchmarks(
-        tasks=GAIATasks(),
+        tasks=SWEBench(),
+        # tasks=GAIATasks(),
         modifier=ModifierPipe[GAIATask]([
             # GAIAFilesOnlyModifier(),
             # PredModifier(lambda t: t["task_id"] == "df6561b2-7ee5-4540-baab-5095f742716a"),  # this one is consistently getting an error.
@@ -88,10 +90,10 @@ if __name__ == "__main__":
         nworkers=args.nworkers,
         # runner=E2BTerminalBenchmarkRunner(),
         # runner=E2BServerTerminalBenchmarkRunner(),
-        runner=DockerServerBenchmarkRunner(),
-        # runner=DefaultBenchmarkRunner(),
-        # runner=DockerBenchmarkRunner(),
+        # runner=DockerServerBenchmarkRunner(),
+        runner=DockerBenchmarkRunner(),
         # runner=FakeBenchmarkRunner(),
+        # runner=DefaultBenchmarkRunner(),
         server=args.server
     ).run()
 

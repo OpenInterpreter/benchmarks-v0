@@ -181,7 +181,7 @@ class DockerServerBenchmarkRunner(BenchmarkRunner):
                 c.send(json.dumps({"role": "user", "type": "message", "content": zs["prompt"]}))
                 c.send(json.dumps({"role": "user", "type": "message", "end": True}))
 
-                timeout = 10 * 60
+                timeout = 20 * 60
                 current_msg = recv(c, timeout)
                 acc = Accumulator()
                 while current_msg is not None and not is_done(current_msg):
@@ -194,10 +194,8 @@ class DockerServerBenchmarkRunner(BenchmarkRunner):
                         acc = Accumulator()
                     current_msg = recv(c, timeout)
 
-            # log("stopping...")
             p.kill()
             subprocess.run(["docker", "stop", container_name], stdout=subprocess.DEVNULL)
-            # log("stopped!")
             
             return messages
 
