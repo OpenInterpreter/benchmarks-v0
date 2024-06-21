@@ -35,40 +35,7 @@ console_handler.setLevel(logging.DEBUG)
 logger.addHandler(console_handler)
 
 
-DO_NOTHING = lambda _: None
-
-
-def run_benchmark(benchmark: TasksStore, mod: TaskSetModifier, command: OpenInterpreterCommand, runner: BenchmarkRunner) -> List[TaskResult]:
-    all_tasks = mod.modify(benchmark.get_tasks())
-    results: List[TaskResult] = []
-
-    # logger.debug(f"Running {len(all_tasks)} task(s)...")
-
-    for task in all_tasks:
-        lt = benchmark.load_task(task)
-        zstask = lt.to_zero_shot()
-
-        # logger.debug(f"  Running task {zstask['id']}...")
-        start = datetime.now()
-        messages  = runner.run(lt, command, DO_NOTHING, DO_NOTHING)
-        end = datetime.now()
-
-        status = lt.to_result_status(messages)
-        result: TaskResult = {
-            "task_id": zstask["id"],
-            "command": command,
-            "prompt": zstask["prompt"],
-            "start": start,
-            "end": end,
-            "status": status,
-            "messages": messages,
-        }
-
-        results.append(result)
-
-    logger.debug("done!")
-
-    return results
+DO_NOTHING = lambda *args, **kwargs: None
 
 
 Result = TypeVar("Result")
