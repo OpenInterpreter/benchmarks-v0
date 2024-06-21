@@ -1,6 +1,5 @@
 import asyncio
 import asyncio.subprocess
-from io import StringIO
 import json
 import logging
 import os
@@ -8,8 +7,8 @@ import threading
 import traceback
 import uuid
 import time
-import uvicorn
 import hypercorn.config
+from io import StringIO
 from hypercorn.asyncio import serve
 from contextlib import contextmanager
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
@@ -35,33 +34,6 @@ logger.setLevel(logging.DEBUG)
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.DEBUG)
 logger.addHandler(console_handler)
-
-Value = TypeVar("Value")
-class LockedValue(Generic[Value]):
-    """
-    Only works with primitives.
-    """
-    def __init__(self, value: Value):
-        self._lock = threading.Lock()
-        self._value = value
-    
-    def get(self):
-        return self._value
-
-    def set(self, value: Value):
-        with self._lock:
-            self._value = value
-
-
-class LockedObject(Generic[Value]):
-    def __init__(self, obj: Value):
-        self._lock = threading.Lock()
-        self._obj = obj
-    
-    @contextmanager
-    def use(self):
-        with self._lock:
-            yield self._obj
 
 
 DO_NOTHING = lambda _: None
@@ -160,7 +132,6 @@ def run_benchmark_worker_pool(benchmark: TasksStore, mod: TaskSetModifier, comma
     actual_n_workers = n_workers or os.cpu_count()
     with ThreadPoolExecutor(max_workers=actual_n_workers) as pool:
         logger.debug(f"Running {len(all_tasks)} tasks across {actual_n_workers} threads...")
-
         zero_shots = [(lt, lt.to_zero_shot()) for lt in all_tasks]
 
         def make_fs(id: str):
@@ -175,14 +146,11 @@ def run_benchmark_worker_pool(benchmark: TasksStore, mod: TaskSetModifier, comma
         run_task_args = [(lt, command, runner, make_fs(zs["id"])) for lt, zs in zero_shots]
         apps = []
         for args in run_task_args:
-            # tlc = TaskLifecycle[TaskResult]()
-            # start, log, done = make_fs(args[0].to_zero_shot()['id'])
-            # tlc.add_start_fn(start)
-            # tlc.add_done_fn(done)
-            # apps.append((tlc.wrap(run_task), (*args[:-1], log)))
-
-            log = lambda _: None
-            apps.append((run_task, (*args[:-1], log)))
+            tlc = TaskLifecycle[TaskResult]()
+            start, log, done = make_fs(args[0].to_zero_shot()['id'])
+            tlc.add_start_fn(start)
+            tlc.add_done_fn(done)
+            apps.append((tlc.wrap(run_task), (*args[:-1], log)))
         futures = [pool.submit(fn, *args) for fn, args in apps]
         
         for f in as_completed(futures):
@@ -191,74 +159,6 @@ def run_benchmark_worker_pool(benchmark: TasksStore, mod: TaskSetModifier, comma
         logger.debug(f"Done!")
     
     return task_results
-
-
-def run_benchmark_threaded(benchmark: TasksStore, mod: TaskSetModifier, command: OpenInterpreterCommand, runner: BenchmarkRunner, n_threads: int = 2) -> List[TaskResult]:
-    all_tasks = mod.modify(benchmark.get_tasks())
-    results: Queue[TaskResult] = Queue()
-    threads: List[Tuple[Queue, Thread]] = []
-
-    def run_task(task_queue: Queue):
-        thread_id = uuid.uuid4()
-        # THERE IS A RACE CONDITION -- check if empty, then get will NOT work.  Should be atomic op.
-        # actually jk this isn't a problem because tasks are assigned before any threads are started,
-        # and we aren't assigning anything after thread creation.
-        # YES I am cheating but it's fine.
-        while not task_queue.empty():
-            task = task_queue.get()
-            lt = benchmark.load_task(task)
-            zstask = lt.to_zero_shot()
-            logger.debug(f"  task {zstask['id']} on thread {thread_id}: RUNNING...")
-            start = datetime.now()
-            messages = runner.run(lt, command, DO_NOTHING, DO_NOTHING)
-            end = datetime.now()
-            status = lt.to_result_status(task)
-            logger.debug(f"  task {zstask['id']} on thread {thread_id}: DONE!")
-            results.put({
-                "task_id": zstask["id"],
-                "command": command,
-                "prompt": zstask["prompt"],
-                "start": start,
-                "end": end,
-                "messages": messages,
-                "status": status
-            })
-
-    logger.debug(f"Setting up {n_threads} thread(s)...")
-
-    # setting up threads.
-    for _ in range(0, n_threads):
-        q = Queue()
-        threads.append((q, Thread(target=run_task, args=(q,))))
-    
-    logger.debug("done!")
-    logger.debug(f"Assigning {len(all_tasks)} tasks to {n_threads} threads...")
-    
-    # assigning tasks to threads in a round-robin manner.
-    th_index = 0
-    for task in all_tasks:
-        q, _ = threads[th_index]
-        q.put(task)
-        th_index = (th_index + 1) % n_threads
-    
-    logger.debug("done!")
-    logger.debug(f"Starting {n_threads} thread(s)...")
-    
-    # starting threads.
-    for q, th in threads:
-        th.start()
-        logger.debug(f"  Started thread with {q.qsize()} tasks.")
-    
-    logger.debug("done!")
-    logger.debug(f"Running {len(all_tasks)} tasks across {n_threads} thread(s)...")
-
-    # joining threads.
-    for _, th in threads:
-        th.join()
-    
-    logger.debug("done!")
-
-    return list(results.queue)
 
 
 def judge_result(initial_prompt: str, last_msg: str, expected: str) -> ResultStatus:
@@ -370,28 +270,6 @@ class WebSocketsManager:
             return False
         except (WebSocketDisconnect, RuntimeError):
             return True
-
-
-# yoinked from https://stackoverflow.com/questions/61577643/python-how-to-use-fastapi-and-uvicorn-run-without-blocking-the-thread.
-class Server(uvicorn.Server):
-    def install_signal_handlers(self):
-        pass
-
-    @contextmanager
-    def run_in_thread(self):
-        thread = threading.Thread(target=self.run)
-        thread.start()
-        try:
-            while not self.started:
-                time.sleep(1e-3)
-            yield
-        finally:
-            # self.should_exit = True
-            self.force_exit = True
-            logger.debug("about to shutdown server!")
-            asyncio.run(self.shutdown())
-            logger.debug("about to join server thread with main thread")
-            thread.join(timeout=10)
 
 
 @contextmanager
