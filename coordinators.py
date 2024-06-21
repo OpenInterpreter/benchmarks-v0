@@ -20,7 +20,6 @@ from typing import Any, Callable, Any, Dict, Generic, List, Literal, Optional, P
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from uvicorn import Config
 from interpreter import OpenInterpreter
 from commands import OpenInterpreterCommand
 
