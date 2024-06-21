@@ -56,13 +56,13 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-l", "--list", action="store_true", help="list the possible command configuration ids")
-    parser.add_argument("-c", "--command", action="store", type=str, default=default_command_id, help=f"change the command configuration ({", ".join(commands.keys())})")
+    parser.add_argument("-c", "--command", action="store", type=str, default=default_command_id, help=f"change the command configuration ({', '.join(commands.keys())})")
     parser.add_argument("-nt", "--ntasks", action="store", type=int, help="run the first n tasks for the selected benchmark")
     parser.add_argument("-nw", "--nworkers", action="store", type=int, help="run the benchmarks across n workers (docker containers, processes, E2B instances, etc.)")
     parser.add_argument("-to", "--task-offset", action="store", type=int, default=0)
     parser.add_argument("-s", "--server", action="store_true", help="launch a server that keeps track of and displays task starts, stops, and logging")
-    parser.add_argument("-r", "--runner", action="store", type=str, default=default_runner, help=f"the kind of worker to run each task on ({", ".join(runners.keys())})")
-    parser.add_argument("-b", "--benchmark", action="store", default=default_benchmark, help=f"where to retreive the list of tasks to run from ({", ".join(task_stores.keys())})")
+    parser.add_argument("-r", "--runner", action="store", type=str, default=default_runner, help=f"the kind of worker to run each task on ({', '.join(runners.keys())})")
+    parser.add_argument("-b", "--benchmark", action="store", default=default_benchmark, help=f"where to retreive the list of tasks to run from ({', '.join(task_stores.keys())})")
     parser.add_argument("-bf", "--bfile", action="store", type=str, help="only works when '--benchmark custom' is used")
     args = parser.parse_args(namespace=ArgumentsNamespace())
 
