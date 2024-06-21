@@ -79,7 +79,7 @@ def run_benchmark(benchmark: TasksStore, mod: TaskSetModifier, command: OpenInte
 
         # logger.debug(f"  Running task {zstask['id']}...")
         start = datetime.now()
-        messages  = runner.run(lt, command, DO_NOTHING, lambda: False, DO_NOTHING)
+        messages  = runner.run(lt, command, DO_NOTHING, DO_NOTHING)
         end = datetime.now()
 
         status = lt.to_result_status(messages)
@@ -128,7 +128,7 @@ def run_task(lt: LoadedTask, command: OpenInterpreterCommand, runner: BenchmarkR
     zstask = lt.to_zero_shot()
     start = datetime.now()
     try:
-        messages = runner.run(lt, command, DO_NOTHING, lambda: False, log)
+        messages = runner.run(lt, command, DO_NOTHING, log)
         status = lt.to_result_status(messages)
     except Exception as e:
         strio = StringIO()
@@ -210,7 +210,7 @@ def run_benchmark_threaded(benchmark: TasksStore, mod: TaskSetModifier, command:
             zstask = lt.to_zero_shot()
             logger.debug(f"  task {zstask['id']} on thread {thread_id}: RUNNING...")
             start = datetime.now()
-            messages = runner.run(lt, command, DO_NOTHING, lambda: False, DO_NOTHING)
+            messages = runner.run(lt, command, DO_NOTHING, DO_NOTHING)
             end = datetime.now()
             status = lt.to_result_status(task)
             logger.debug(f"  task {zstask['id']} on thread {thread_id}: DONE!")
@@ -505,7 +505,7 @@ def run_benchmark_worker_pool_with_server(
         
         start = datetime.now()
         try:
-            messages = rnnr.run(lt, cmd, write, ws_manager.is_closed, log)
+            messages = rnnr.run(lt, cmd, write, log)
             status = lt.to_result_status(messages)
         except Exception as e:
             strio = StringIO()

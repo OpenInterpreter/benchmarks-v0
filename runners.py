@@ -30,7 +30,7 @@ Task = TypeVar("Task")
 
 class BenchmarkRunner(ABC):
     @abstractmethod
-    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], should_stop: Callable[[], bool], log: Callable[[str], None]) -> List[LMC]:
+    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], log: Callable[[str], None]) -> List[LMC]:
         """
         Should stop is a boolean that will return True if something external wants to stop the running process.  It should be checked periodically.
         """
@@ -38,7 +38,7 @@ class BenchmarkRunner(ABC):
 
 
 class DefaultBenchmarkRunner(BenchmarkRunner):
-    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], should_stop: Callable[[], bool], log: Callable[[str], None]) -> List[LMC]:
+    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], log: Callable[[str], None]) -> List[LMC]:
         with TemporaryDirectory() as worker_dir:
             output_dir = Path(worker_dir) / Path("output")
             input_dir = Path(worker_dir) / Path("input")
@@ -53,14 +53,8 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
             ], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
 
             assert p.stdout is not None, "stdout stream is None!  Did you forget to set stdout=subprocess.PIPE?"
-            while p.poll() is None and not should_stop():
+            while p.poll() is None:
                 write(p.stdout.readline())
-            
-            if should_stop():
-                # stopped before completion!
-                p.kill()
-                log("stopped!")
-                return []
             
             # If the process p finishes without a newline, the above loop will not write the rest of the process.
             # Hence the following line.
@@ -75,7 +69,7 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
 class DockerBenchmarkRunner(BenchmarkRunner):
     WORKER_NAME = "worker"
 
-    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], should_stop: Callable[[], bool], log: Callable[[str], None]) -> List[LMC]:
+    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], log: Callable[[str], None]) -> List[LMC]:
         with TemporaryDirectory() as worker_dir:
             output_dir = Path(worker_dir) / Path("output")
             input_dir = Path(worker_dir) / Path("input")
@@ -96,15 +90,8 @@ class DockerBenchmarkRunner(BenchmarkRunner):
             p = subprocess.Popen(dcmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL)
             assert p.stdout is not None
 
-            while p.poll() is None and not should_stop():
+            while p.poll() is None:
                 write(p.stdout.readline())
-            
-            if should_stop():
-                # stopped before completion!
-                log("stopped!")
-                p.kill()
-                return []
-            
             write(p.stdout.read())
 
             messages_path = output_dir / worker.OUTPUT_PATH
@@ -127,7 +114,7 @@ def get_free_port():
 
 
 class FakeBenchmarkRunner(BenchmarkRunner):
-    def run(self, lt, command, write, should_stop, log) -> List[LMC]:
+    def run(self, lt, command, write, log) -> List[LMC]:
         # write(b"how could you.")
         return [{"role": "assistant", "type": "message", "content": "im sowwy."}]
 
@@ -135,7 +122,7 @@ class FakeBenchmarkRunner(BenchmarkRunner):
 class DockerServerBenchmarkRunner(BenchmarkRunner):
     WORKER_NAME = "server-worker"
 
-    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], should_stop: Callable[[], bool], log: Callable[[str], None]) -> List[LMC]:
+    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], log: Callable[[str], None]) -> List[LMC]:
         with TemporaryDirectory() as worker_dir:
             output_dir = Path(worker_dir) / Path("output")
             input_dir = Path(worker_dir) / Path("input")
@@ -254,24 +241,10 @@ class E2BTerminalBenchmarkRunner(BenchmarkRunner):
     limit = 18
 
     # default timeout is 10 minutes.
-    def __init__(self, wr: WorkerRunner, timeout: int = 10 * 60 * 1000):
+    def __init__(self, timeout: int = 10 * 60 * 1000):
         self._timeout = timeout
 
-    def run_cmd_blocking(self, sandbox: Sandbox, cmd: str, write: Callable[[bytes], None], should_stop: Callable[[], bool], log: Callable[[str], None], display: bool = True):
-        if display:
-            try:
-                p = sandbox.process.start_and_wait(
-                    cmd,
-                    on_stdout=lambda output: write(f"{output.line}\n".encode("utf-8")),
-                    on_stderr=lambda output: write(f"{output.line}\n".encode("utf-8")),
-                    timeout=self._timeout
-                )
-            except SandboxException as e:
-                print("e", str(e))
-        else:
-            sandbox.process.start_and_wait(cmd)
-
-    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], should_stop: Callable[[], bool], log: Callable[[str], None]) -> List[LMC]:
+    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], log: Callable[[str], None]) -> List[LMC]:
         messages = []
         with Sandbox(template="worker", cwd="/") as sandbox:
             input_dir = "/input"
@@ -284,21 +257,24 @@ class E2BTerminalBenchmarkRunner(BenchmarkRunner):
             prompt = lt.to_zero_shot()["prompt"]
             command_json_str = json.dumps(command)
             log(f"sandbox id: {sandbox.id}")
-            self.run_cmd_blocking(
-                sandbox,
-                f"sudo python -m worker.run '{command_json_str}' {shlex.quote(prompt)} '/' {output_dir}",
-                write,
-                should_stop,
-                log,
-                display=True)
+
+            try:
+                sandbox.process.start_and_wait(
+                    f"sudo python -m worker.run '{command_json_str}' {shlex.quote(prompt)} '/' {output_dir}",
+                    on_stdout=lambda output: write(f"{output.line}\n".encode("utf-8")),
+                    on_stderr=lambda output: write(f"{output.line}\n".encode("utf-8")),
+                    timeout=self._timeout
+                )
+            except SandboxException as e:
+                print("e", str(e))
+
             try:
                 messages_file = sandbox.download_file(str(Path(output_dir) / worker.OUTPUT_PATH))
                 messages_str = messages_file.decode()
                 messages.extend(json.loads(messages_str))
             except Exception as e:  # download file doesn't throw an exception any less generic than Exception.
                 log(str(e))
-            finally:
-                log("closing!")
+
         Sandbox.kill(sandbox_id=sandbox.id)
         return messages
 
@@ -309,21 +285,7 @@ class E2BServerTerminalBenchmarkRunner(BenchmarkRunner):
     def __init__(self, timeout=10):
         self._timeout = timeout
 
-    def run_cmd_blocking(self, sandbox: Sandbox, cmd: str, write: Callable[[bytes], None], should_stop: Callable[[], bool], log: Callable[[str], None], display: bool = True):
-        if display:
-            try:
-                p = sandbox.process.start_and_wait(
-                    cmd,
-                    on_stdout=lambda output: write(f"{output.line}\n".encode("utf-8")),
-                    on_stderr=lambda output: write(f"{output.line}\n".encode("utf-8")),
-                    timeout=self._timeout
-                )
-            except SandboxException as e:
-                print("e", str(e))
-        else:
-            sandbox.process.start_and_wait(cmd)
-
-    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], should_stop: Callable[[], bool], log: Callable[[str], None]) -> List[LMC]:
+    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], log: Callable[[str], None]) -> List[LMC]:
         messages: List[LMC] = []
         with Sandbox(template="server-worker", cwd="/") as sandbox:
             input_dir = "/input"
@@ -399,7 +361,7 @@ class E2BServerTerminalBenchmarkRunner(BenchmarkRunner):
 
 
 class E2BDesktopBenchmarkRunner(BenchmarkRunner):
-    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], should_stop: Callable[[], bool], log: Callable[[str], None]) -> List[LMC]:
+    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], log: Callable[[str], None]) -> List[LMC]:
         with Desktop(template="screen") as desktop:
             desktop.screenshot("screenshot-1.png")
 
