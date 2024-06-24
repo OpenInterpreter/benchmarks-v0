@@ -69,9 +69,7 @@ def run_task(lt: LoadedTask, command: OpenInterpreterCommand, runner: BenchmarkR
         messages = runner.run(lt, command, DO_NOTHING, log)
         status = lt.to_result_status(messages)
     except Exception as e:
-        strio = StringIO()
-        traceback.print_exc(file=strio)
-        log(strio.getvalue())
+        log(traceback.format_exc())
         status = "error"
         messages = []
     finally:
@@ -352,9 +350,7 @@ def run_benchmark_worker_pool_with_server(
             messages = rnnr.run(lt, cmd, write, log)
             status = lt.to_result_status(messages)
         except Exception as e:
-            strio = StringIO()
-            traceback.print_exc(file=strio)
-            log(strio.getvalue())
+            log(traceback.format_exc())
             status = "error"
             messages = []
         finally:
