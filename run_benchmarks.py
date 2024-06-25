@@ -8,7 +8,7 @@ from typing import List, Optional
 
 from constants import DATASETS, RESULTS
 from custom import CustomTasks
-from runners import DefaultBenchmarkRunner, DockerBenchmarkRunner, DockerServerBenchmarkRunner, E2BDesktopBenchmarkRunner, E2BServerTerminalBenchmarkRunner, E2BTerminalBenchmarkRunner, FakeBenchmarkRunner
+from runners import DefaultBenchmarkRunner, DockerBenchmarkRunner, DockerEnvBenchmarkRunner, DockerServerBenchmarkRunner, E2BDesktopBenchmarkRunner, E2BServerTerminalBenchmarkRunner, E2BTerminalBenchmarkRunner, FakeBenchmarkRunner
 from modifiers import ModifierPipe, PredModifier, SizeOffsetModifier
 from coordinators import OIBenchmarks, TaskResult
 from commands import commands
@@ -74,8 +74,8 @@ if __name__ == "__main__":
     print("output file:", save_path)
 
     results = OIBenchmarks(
-        tasks=SWEBench(),
-        # tasks=GAIATasks(),
+        # tasks=SWEBench(),
+        tasks=GAIATasks(),
         modifier=ModifierPipe[GAIATask]([
             # GAIAFilesOnlyModifier(),
             # PredModifier(lambda t: t["task_id"] == "df6561b2-7ee5-4540-baab-5095f742716a"),  # this one is consistently getting an error.
@@ -90,8 +90,9 @@ if __name__ == "__main__":
         nworkers=args.nworkers,
         # runner=E2BTerminalBenchmarkRunner(),
         # runner=E2BServerTerminalBenchmarkRunner(),
-        # runner=DockerServerBenchmarkRunner(),
-        runner=DockerBenchmarkRunner(),
+        runner=DockerServerBenchmarkRunner(),
+        # runner=DockerBenchmarkRunner(),
+        # runner=DockerEnvBenchmarkRunner(),
         # runner=FakeBenchmarkRunner(),
         # runner=DefaultBenchmarkRunner(),
         server=args.server

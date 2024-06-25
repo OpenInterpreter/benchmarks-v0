@@ -8,4 +8,4 @@ COPY server-worker/ worker
 EXPOSE 8000
 
 RUN python -m pip install -r worker/requirements.txt
-ENTRYPOINT [ "python", "-m", "worker.run" ]
+# ENTRYPOINT [ "python", "-m", "worker.run" ]

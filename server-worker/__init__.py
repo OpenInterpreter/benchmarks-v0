@@ -22,15 +22,10 @@ def command_to_interpreter(cmd: Dict[str, Any]) -> OpenInterpreter:
 
 
 def run(command: Dict[str, Any]) -> None:
-    assert Path("input").exists(), "input folder doesn't exist!"
     interpreter = command_to_interpreter(command)
 
     try:
-        # output = cast(List, interpreter.chat(prompt, display=True, stream=False))
-        print("starting server")
         interpreter.server()
-        print("stopping server")
-        output = []
     finally:
         interpreter.computer.terminate()
     

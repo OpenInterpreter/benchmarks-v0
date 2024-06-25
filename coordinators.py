@@ -17,14 +17,14 @@ from queue import Queue
 from threading import Thread
 from datetime import datetime
 from typing import Any, Callable, Any, Dict, Generic, List, Literal, Optional, ParamSpec, Set, Tuple, TypeVar, TypedDict, Union, cast
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from interpreter import OpenInterpreter
 from commands import OpenInterpreterCommand
 
 from modifiers import IdModifier, TaskSetModifier
-from runners import BenchmarkRunner, FakeBenchmarkRunner
+from runners import BenchmarkRunner, FakeBenchmarkRunner, Recorder
 from task import LMC, LoadedTask, ResultStatus, TaskResult, TasksStore, ZeroShotTask
 
 
@@ -60,14 +60,31 @@ class TaskLifecycle(Generic[Result]):
             for dfn in self._done_fns: dfn(result)
             return result
         return wrapped_fn  # type: ignore
+    
+
+def run_and_judge(rnnr: BenchmarkRunner, lt: LoadedTask, cmd: OpenInterpreterCommand, write: Callable[[bytes], None], log: Callable[[str], None]) -> Tuple[List[LMC], ResultStatus]:
+    # messages = rnnr.run(lt, cmd, write, log)
+    # status = lt.to_result_status(messages)
+    # return messages, status
+
+    return rnnr.run_and_judge(lt, cmd, Recorder(log, write))
+
+    # with prepare_runner(rnnr, lt, cmd, Recorder(log, write)) as (env, invoke):
+    #     messages = invoke()
+    #     status = lt.judge(env, messages)
+    #     return messages, status
+
+    # make_env, invoke = rnnr.prepare(lt, cmd, Recorder(log, write))
+    # with make_env as env:
+    #     messages = invoke()
+
 
 
 def run_task(lt: LoadedTask, command: OpenInterpreterCommand, runner: BenchmarkRunner, log) -> TaskResult:
     zstask = lt.to_zero_shot()
     start = datetime.now()
     try:
-        messages = runner.run(lt, command, DO_NOTHING, log)
-        status = lt.to_result_status(messages)
+        messages, status = run_and_judge(runner, lt, command, DO_NOTHING, log)
     except Exception as e:
         log(traceback.format_exc())
         status = "error"
@@ -308,6 +325,8 @@ def run_benchmark_worker_pool_with_server(
 
     @app.get("/view/{task_id}", response_class=HTMLResponse)
     async def view(request: Request, task_id: str):
+        if task_id not in zs_map:
+            raise HTTPException(status_code=404, detail=f"no task with id '{task_id}'!")
         prompt = zs_map[task_id]["prompt"]
         return templates.TemplateResponse(
             request,
@@ -347,8 +366,7 @@ def run_benchmark_worker_pool_with_server(
         
         start = datetime.now()
         try:
-            messages = rnnr.run(lt, cmd, write, log)
-            status = lt.to_result_status(messages)
+            messages, status = run_and_judge(rnnr, lt, cmd, write, log)
         except Exception as e:
             log(traceback.format_exc())
             status = "error"

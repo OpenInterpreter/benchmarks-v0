@@ -6,6 +6,7 @@ from typing import Dict, Generic, List, Literal, Optional, TypeVar, TypedDict
 from fsspec import AbstractFileSystem
 
 from commands import OpenInterpreterCommand
+from environment import Environment
 
 
 Task = TypeVar("Task")
@@ -37,13 +38,21 @@ class LoadedTask(Generic[Task]):
         ...
     
     @abstractmethod
+    def setup_env(self, env: Environment):
+        ...
+    
+    @abstractmethod
     def to_zero_shot(self) -> ZeroShotTask:
         raise NotImplementedError()
     
     @abstractmethod
     def to_result_status(self, messages: List[LMC]) -> ResultStatus:
         raise NotImplementedError()
-   
+    
+    @abstractmethod
+    def judge(self, env: Environment, messages: List[LMC]) -> ResultStatus:
+        raise NotImplementedError()
+
 
 class TasksStore(Generic[Task]):
     @abstractmethod

@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass
 from io import RawIOBase, StringIO
 import json
@@ -8,7 +9,7 @@ import shlex
 import subprocess
 from tempfile import TemporaryDirectory
 import time
-from typing import Any, Callable, List, TypeVar, cast
+from typing import Any, Callable, Iterator, List, Tuple, TypeVar, cast, override
 from rich.console import Console
 from websockets import ConnectionClosed
 from websockets.sync.client import connect
@@ -18,22 +19,39 @@ from websocket import WebSocket
 from e2b import Sandbox, SandboxException
 from e2b_desktop import Desktop
 
+from environment import Environment, Executing, PopenExecuting, StructuredEnvironment
 import worker
 from accumulator import Accumulator
 from commands import OpenInterpreterCommand
-from task import LMC, LoadedTask
+from task import LMC, LoadedTask, ResultStatus
 from utils import LocalBasedFS
 
 
 Task = TypeVar("Task")
 
 
+@dataclass(frozen=True)
+class Recorder:
+    """
+    Groups together functions that are used for writing debug and logging data.  Where this data goes
+    is completely up to the functions used to construct each instance.
+
+    `log`: `(str) -> None`.
+        Writes the given string to a log.  For debugging specific tasks and runners.
+    `write`: `(bytes) -> None`.
+        Writes the given bytes to a stream somewhere.  For displaying process output.
+    """
+    log: Callable[[str], None]
+    write: Callable[[bytes], None]
+
+
 class BenchmarkRunner(ABC):
     @abstractmethod
     def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], log: Callable[[str], None]) -> List[LMC]:
-        """
-        Should stop is a boolean that will return True if something external wants to stop the running process.  It should be checked periodically.
-        """
+        raise NotImplementedError()
+    
+    @abstractmethod
+    def run_and_judge(self, lt: LoadedTask, cmd: OpenInterpreterCommand, recorder: Recorder) -> Tuple[List[LMC], ResultStatus]:
         raise NotImplementedError()
 
 
@@ -104,6 +122,75 @@ class DockerBenchmarkRunner(BenchmarkRunner):
                 return messages
 
 
+@contextmanager
+def docker_env(image_name: str, run_args: List[str], container_fs_mount: str) -> Iterator[Environment]:
+    with TemporaryDirectory() as td:
+        p = subprocess.run(
+            ["docker", "run", "-td", "-v", f"{td}:{container_fs_mount}", *run_args, image_name],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True)
+        container_id = p.stdout.strip()
+
+        def exec(cmd: List[str]) -> Executing:
+            p = subprocess.Popen(
+                ["docker", "exec", "-t", container_id, *cmd],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL)
+            return PopenExecuting(p)
+
+        try:
+            yield StructuredEnvironment(
+                exec_f=exec,
+                fs=LocalBasedFS(td))
+        finally:
+            p = subprocess.run(
+                ["docker", "kill", container_id],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                text=True)
+            killed_output = p.stdout.strip()
+            if killed_output != container_id:
+                raise RuntimeError(killed_output)
+
+
+class DockerEnvBenchmarkRunner(BenchmarkRunner):
+    WORKER_NAME = "worker"
+
+    def run_and_judge(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, recorder: Recorder) -> Tuple[List[LMC], ResultStatus]:
+        zs = lt.to_zero_shot()
+        command_json_str = json.dumps(command)
+        container_name = f"{zs['id']}_{time.time()}"
+        container_mount = "/main"
+        output = "output"
+
+        with docker_env("worker", ["--name", container_name], container_mount) as env:
+            fs = env.get_fs()
+            fs.mkdir(output, create_parents=True)
+            lt.setup_env(env)
+
+            env.exec([
+                "python", "-m", "worker.run",
+                command_json_str, f"{shlex.quote(zs['prompt'])}", container_mount, f"{container_mount}/{output}"
+            ]).wait_with(stdout=recorder.write)
+
+            messages_path = f"{output}/{worker.OUTPUT_PATH}"
+            if not fs.exists(messages_path):
+                recorder.log(f"couldn't find {messages_path}!")
+                messages = []
+            else:
+                with fs.open(messages_path) as f:
+                    messages = json.load(f)
+
+            return messages, lt.judge(env, messages)
+    
+    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], log: Callable[[str], None]) -> List[LMC]:
+        raise NotImplementedError()
+    
+
 def get_free_port():
     # sort of cursed but its fine.
     # basis from https://stackoverflow.com/questions/1365265/on-localhost-how-do-i-pick-a-free-port-number.
@@ -121,6 +208,59 @@ class FakeBenchmarkRunner(BenchmarkRunner):
 
 class DockerServerBenchmarkRunner(BenchmarkRunner):
     WORKER_NAME = "server-worker"
+
+    def run_and_judge(self, lt: LoadedTask, command: OpenInterpreterCommand, recorder: Recorder) -> Tuple[List[LMC], ResultStatus]:
+        zs = lt.to_zero_shot()
+        container_name = f"{zs['id']}_{time.time()}"
+        container_mount = "/main"
+        command_json_str = json.dumps(command)
+        port = get_free_port()
+
+        with docker_env("server-worker", ["--name", container_name, "-p", f"{port}:8000"], container_mount) as env:
+            lt.setup_env(env)
+
+            e = env.exec(["python", "-m", "worker.run", command_json_str, container_mount])
+            for bs in e.generate_lines():
+                # recorder.log(bs.decode())
+                if "Uvicorn running" in bs.decode():
+                    break
+            
+            def is_done(msg: LMC) -> bool:
+                return (
+                    "role" in msg and msg["role"] == "server"
+                    and "type" in msg and msg["type"] == "completion"
+                    and "content" in msg and "DONE" in msg["content"]
+                )
+            
+            def recv(c: Connection, timeout: int) -> LMC | None:
+                try:
+                    return cast(LMC, json.loads(c.recv(timeout)))
+                except ConnectionClosed:
+                    return None
+
+            messages: List[LMC] = []
+
+            with connect(f"ws://localhost:{port}") as c:
+                c.send(json.dumps({"role": "user", "type": "message", "start": True}))
+                c.send(json.dumps({"role": "user", "type": "message", "content": zs["prompt"]}))
+                c.send(json.dumps({"role": "user", "type": "message", "end": True}))
+
+                timeout = 20 * 60
+                current_msg = recv(c, timeout)
+                acc = Accumulator()
+                while current_msg is not None and not is_done(current_msg):
+                    if current_msg["role"] != "server" and "content" in current_msg and isinstance(current_msg["content"], str):
+                        recorder.write(str(current_msg["content"]).encode("utf-8"))
+                    messages.append(current_msg)
+                    full_msg = acc.accumulate(current_msg)
+                    if full_msg is not None:
+                        messages.append(full_msg)
+                        acc = Accumulator()
+                    current_msg = recv(c, timeout)
+            
+            e.kill()
+            return messages, lt.judge(env, messages)
+
 
     def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], log: Callable[[str], None]) -> List[LMC]:
         with TemporaryDirectory() as worker_dir:
@@ -147,7 +287,7 @@ class DockerServerBenchmarkRunner(BenchmarkRunner):
 
             while p.poll() is None and "Uvicorn running" not in p.stdout.readline().decode("utf-8"):
                 time.sleep(0.5)
-            
+
             def is_done(msg: LMC) -> bool:
                 return (
                     "role" in msg and msg["role"] == "server"

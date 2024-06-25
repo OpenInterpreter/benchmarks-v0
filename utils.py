@@ -18,6 +18,9 @@ class LocalBasedFS(AbstractFileSystem):
     
     def ls(self, path='', detail=True, **kwargs):
         return self.fs.ls(self._full_path(path), detail=detail, **kwargs)
+    
+    def exists(self, path, **kwargs):
+        return self.fs.exists(self._full_path(path), **kwargs)
 
 
 def copy_between_fss(src_fs: AbstractFileSystem, src_path: str, dst_fs: AbstractFileSystem, dst_path: str):

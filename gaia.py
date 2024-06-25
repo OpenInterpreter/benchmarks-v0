@@ -1,13 +1,11 @@
-from dataclasses import dataclass
-import re
-from typing import Callable, Dict, List, Optional, TypedDict, cast
+from typing import Dict, List, Optional, TypedDict, cast
 from datasets import load_dataset
 from fsspec import AbstractFileSystem, filesystem
-from interpreter import OpenInterpreter
 
-from coordinators import LMC, TasksStore, LoadedTask, ResultStatus, TaskResult, TaskSetModifier, ZeroShotTask, judge_result
+from coordinators import LMC, TasksStore, LoadedTask, ResultStatus, TaskSetModifier, ZeroShotTask, judge_result
 from constants import DATASETS, GAIA
-from utils import copy_between_fss, wrapping_offset
+from environment import Environment
+from utils import copy_between_fss
 
 
 GAIATask = TypedDict("GAIATask", {
@@ -28,8 +26,11 @@ class LoadedGAIATask(LoadedTask[GAIATask]):
         local_fs = filesystem("file")
         copy_between_fss(local_fs, self.task["file_path"], fs, self.task["file_name"])
     
+    def setup_env(self, env: Environment):
+        self.setup_input_dir(env.get_fs())
+    
     def to_zero_shot(self) -> ZeroShotTask:
-        file_path = f"input/{self.task['file_name']}"
+        file_path = self.task['file_name']
         prompt = self.task["Question"] if self.task["file_name"] == "" else f"file_path: {file_path}\n{self.task['Question']}"
         return {"id": self.task["task_id"], "prompt": prompt}
     
@@ -47,6 +48,9 @@ class LoadedGAIATask(LoadedTask[GAIATask]):
         expected = self.task["Final answer"]
         prompt = self.to_zero_shot()["prompt"]
         return judge_result(prompt, final_message["content"], expected)
+
+    def judge(self, env: Environment, messages: List[LMC]) -> ResultStatus:
+        return self.to_result_status(messages)
 
 
 class GAIATasks(TasksStore[GAIATask]):

@@ -22,7 +22,6 @@ def command_to_interpreter(cmd: Dict[str, Any]) -> OpenInterpreter:
 
 
 def run(command: Dict[str, Any], prompt: str) -> List[Dict[str, str]]:
-    assert Path("input").exists(), "input folder doesn't exist!"
     interpreter = command_to_interpreter(command)
 
     try:
