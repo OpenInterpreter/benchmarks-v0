@@ -15,7 +15,7 @@ This repo is used to run various AI benchmarks on the [Open Interpreter project]
 
 ```bash
 git clone https://github.com/OpenInterpreter/benchmarks.git \
-  && cd oi-benchmarks \
+  && cd benchmarks \
   && python -m venv .venv \
   && source .venv/bin/activate \
   && python -m pip install -r requirements.txt \
