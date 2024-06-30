@@ -14,7 +14,7 @@ This repo is used to run various AI benchmarks on the [Open Interpreter project]
 2. Copy-paste the following lines into your terminal if you're feeling dangerous.
 
 ```bash
-git clone https://github.com/imapersonman/oi-benchmarks.git \
+git clone https://github.com/OpenInterpreter/benchmarks.git \
   && cd oi-benchmarks \
   && python -m venv .venv \
   && source .venv/bin/activate \
