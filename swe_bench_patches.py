@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import subprocess
+from subprocess import PIPE, STDOUT
 from tempfile import TemporaryDirectory
 import threading
 import time
@@ -115,7 +116,8 @@ if __name__ == "__main__":
         for r in repos:
             name = r.replace("/", "__")
             remote = f"https://github.com/swe-bench/{name}.git"
-            subprocess.run(["git", "clone", remote], cwd=repos_dir)
+            out = subprocess.run(["git", "clone", remote], cwd=repos_dir, stdout=PIPE, stderr=STDOUT).stdout
+            module_logger.debug(out.decode())
 
         def run_task(task: SWEBenchTask, command: OpenInterpreterCommand) -> SWEBenchPrediction:
             container_name = f"{task['instance_id']}_{time.time()}"
@@ -129,13 +131,14 @@ if __name__ == "__main__":
             ):
                 # download repository.
                 repo = task["repo"].replace("/", "__")
-                subprocess.run(["cp", "-R", f"{repos_dir}/{repo}", f"{td}/repo"])
+                out = subprocess.run(["cp", "-R", f"{repos_dir}/{repo}", f"{td}/repo"], stdout=PIPE, stderr=STDOUT).stdout
+                container_log.debug(out.decode())
 
                 command_json_str = json.dumps(command)
                 p = subprocess.Popen(
                     ["docker", "exec", "-t", container_id, "python", "-m", "worker.run", command_json_str, "/main"],
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT)
+                    stdout=PIPE,
+                    stderr=STDOUT)
                 
                 logs_so_far = StringIO()
                 def write(bs: bytes):
@@ -161,7 +164,11 @@ if __name__ == "__main__":
                 ])
                 talk_to_oi_server(f"localhost:{port}", prompt, write_oi_response)
 
-                subprocess.run(["docker", "exec", "--workdir", "/main/repo", "-t", container_id, "sh", "-c", "git diff > ../diff.patch"])
+                out = subprocess.run(
+                    ["docker", "exec", "--workdir", "/main/repo", "-t", container_id, "sh", "-c", "git diff > ../diff.patch"],
+                    stdout=PIPE,
+                    stderr=STDOUT).stdout
+                container_log.debug(out.decode())
 
                 with open(f"{td}/diff.patch", "r") as f:
                     container_log.debug("DIFF:")
@@ -207,7 +214,7 @@ if __name__ == "__main__":
             module_logger.info("Finished!")
 
             save_path = CURRENT_RUN / "predictions.json"
-            module_logger.info(f"Saving to {save_path}.")
+            module_logger.info(f"Saving SWE-Bench prediction to {save_path}.")
 
             to_run = "\n  ".join([
                 "python -m swebench.harness.run_evaluation \\",
@@ -219,7 +226,10 @@ if __name__ == "__main__":
                     f"--split {split}",
             ])
             # using print here because the formatting gets in the way of copy-pasting.
-            print("run the following within SWE-Bench's root directory to evaluate the generated patches.")
+            print()
+            print("A few things...")
+            print(f"1) Logs saved to: {CURRENT_RUN.absolute()}")
+            print("2) Run the following within SWE-Bench's root directory to evaluate the generated patches.")
             print("=====COPY=====")
             print(to_run)
             print("===END COPY===")
