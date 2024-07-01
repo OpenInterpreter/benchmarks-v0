@@ -63,11 +63,11 @@ class TaskLifecycle(Generic[Result]):
     
 
 def run_and_judge(rnnr: BenchmarkRunner, lt: LoadedTask, cmd: OpenInterpreterCommand, write: Callable[[bytes], None], log: Callable[[str], None]) -> Tuple[List[LMC], ResultStatus]:
-    # messages = rnnr.run(lt, cmd, write, log)
-    # status = lt.to_result_status(messages)
-    # return messages, status
+    messages = rnnr.run(lt, cmd, write, log)
+    status = lt.to_result_status(messages)
+    return messages, status
 
-    return rnnr.run_and_judge(lt, cmd, Recorder(log, write))
+    # return rnnr.run_and_judge(lt, cmd, Recorder(log, write))
 
     # with prepare_runner(rnnr, lt, cmd, Recorder(log, write)) as (env, invoke):
     #     messages = invoke()

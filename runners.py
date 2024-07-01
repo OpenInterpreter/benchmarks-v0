@@ -121,6 +121,35 @@ class DockerBenchmarkRunner(BenchmarkRunner):
                 messages = json.load(f)
                 return messages
 
+    def run_and_judge(self, lt: LoadedTask, cmd: OpenInterpreterCommand, recorder: Recorder) -> Tuple[List[LMC], ResultStatus]:
+        raise NotImplementedError
+
+
+@contextmanager
+def docker_daemon(image_name: str, run_args: List[str]) -> Iterator[str]:
+    p = subprocess.run(
+        ["docker", "run", "-td", *run_args, image_name],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        text=True)
+    container_id = p.stdout.strip()
+
+    try:
+        yield container_id
+    finally:
+        p = subprocess.run(
+            ["docker", "kill", container_id],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            text=True)
+        killed_output = p.stdout.strip()
+        if killed_output != container_id:
+            raise RuntimeError(killed_output)
+
+
+
 
 @contextmanager
 def docker_env(image_name: str, run_args: List[str], container_fs_mount: str) -> Iterator[Environment]:
@@ -204,6 +233,45 @@ class FakeBenchmarkRunner(BenchmarkRunner):
     def run(self, lt, command, write, log) -> List[LMC]:
         # write(b"how could you.")
         return [{"role": "assistant", "type": "message", "content": "im sowwy."}]
+
+
+def talk_to_oi_server(address: str, prompt: str, write: Callable[[bytes], None]):
+    """
+    address doesn't include scheme stuff or whatever I'm tired.
+    Assumes the server is running.
+    """
+    def is_done(msg: LMC) -> bool:
+        return (
+            "role" in msg and msg["role"] == "server"
+            and "type" in msg and msg["type"] == "completion"
+            and "content" in msg and "DONE" in msg["content"]
+        )
+    
+    def recv(c: Connection, timeout: int) -> LMC | None:
+        try:
+            return cast(LMC, json.loads(c.recv(timeout)))
+        except ConnectionClosed:
+            return None
+
+    messages: List[LMC] = []
+
+    with connect(f"ws://{address}") as c:
+        c.send(json.dumps({"role": "user", "type": "message", "start": True}))
+        c.send(json.dumps({"role": "user", "type": "message", "content": prompt}))
+        c.send(json.dumps({"role": "user", "type": "message", "end": True}))
+
+        timeout = 20 * 60
+        current_msg = recv(c, timeout)
+        acc = Accumulator()
+        while current_msg is not None and not is_done(current_msg):
+            if current_msg["role"] != "server" and "content" in current_msg and isinstance(current_msg["content"], str):
+                write(str(current_msg["content"]).encode("utf-8"))
+            messages.append(current_msg)
+            full_msg = acc.accumulate(current_msg)
+            if full_msg is not None:
+                messages.append(full_msg)
+                acc = Accumulator()
+            current_msg = recv(c, timeout)
 
 
 class DockerServerBenchmarkRunner(BenchmarkRunner):
