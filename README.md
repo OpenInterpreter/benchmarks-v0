@@ -8,25 +8,26 @@ This repo is used to run various AI benchmarks on the [Open Interpreter project]
 
 - [Git](https://git-scm.com)
 - [Git-LFS](https://git-lfs.com)
-- [Python](https://www.python.org)
+- [Python](https://www.python.org) (3.11+)
 - [Docker](https://www.docker.com/)
 
 2. Copy-paste the following lines into your terminal if you're feeling dangerous.
 
 ```bash
-git clone https://github.com/imapersonman/oi-benchmarks.git \
+git clone https://github.com/OpenInterpreter/benchmarks.git \
   && cd oi-benchmarks \
   && python -m venv .venv \
   && source .venv/bin/activate \
   && python -m pip install -r requirements.txt \
   && docker build -t worker . \
+  && docker build -t worker -f server.Dockerfile . \
   && python setup.py
 ```
 
 ## Running Benchmarks
 
 This section assumes:
-- `oi-benchmarks` (downloaded via git in the preview section) is set as the current working directory.
+- `benchmarks` (downloaded via git in the preview section) is set as the current working directory.
 - You've activated the virtualenv with the installed prerequisite packages.
 - Your `OPENAI_API_KEY` environment variable is set with a valid OpenAI API key.
 
