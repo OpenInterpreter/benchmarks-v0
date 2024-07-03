@@ -148,13 +148,13 @@ def make_task_loggers(run_dir: Path, task_name: str) -> Tuple[logging.Logger, lo
         - task_name: the name of the current task.
 
     Returns the tuple:
-        0: Logger for entire container (DEBUG+).
-        1: Logger for plaintext response (DEBUG+).
+        0: Logger for container (DEBUG+).
+        1: Logger for plaintext oi response (DEBUG+).
         Both are children of the module_logger.
     """
     base = run_dir / task_name
     base.mkdir(parents=True, exist_ok=True)
-    common_logger = module_logger.getChild(name)
+    common_logger = module_logger.getChild(task_name)
 
     container_logger = common_logger.getChild("container")
     container_handler = logging.FileHandler(base / "container.log")
