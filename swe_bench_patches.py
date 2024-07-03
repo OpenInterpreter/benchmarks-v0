@@ -1,19 +1,17 @@
-"""
-I'm annoyed by the overcomplicated other stuff that I did (and am brain dead oh noess!) so let's try justs generating stuff
-from docker.
-"""
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from io import StringIO
+from io import BytesIO, StringIO
 import json
 import logging
 import os
-import subprocess
-from subprocess import PIPE, STDOUT
+from queue import Empty, Queue
+import selectors
+import shlex
+from subprocess import Popen, PIPE, STDOUT, run
 from tempfile import TemporaryDirectory
 import threading
 import time
-from typing import List, Literal, Optional, Tuple, TypedDict, cast
+from typing import IO, Dict, Iterator, List, Literal, Optional, Tuple, TypedDict, cast
 from datasets import load_dataset
 from commands import OpenInterpreterCommand
 from constants import LOCAL
@@ -47,6 +45,77 @@ class ArgumentsNamespace(argparse.Namespace):
     split: str
 
 
+def dexec_cmd(container_id: str, exec_args: List[str], cmd: List[str]) -> List[str]:
+    """
+    Executes the given `cmd` in the container at `container_id`, passing `exec_args` in as command-line
+    arguments to the `exec` call, and piping stdout and stderr to the docker desktop logger.
+    
+    Assumes anything else being logged to Docker Desktop is trash.
+    """
+    return ["docker", "exec", "-t", *exec_args, container_id, *cmd]
+    # return ["docker", "exec", "-t", *exec_args, container_id, "sh", "-c", f"{' '.join(cmd)} > /proc/1/fd/1 2>/proc/1/fd/2"]
+
+
+logs_q: Queue[Tuple[logging.Logger, Popen]] = Queue()
+def process_background_logs():
+    # the data being registered in each instance is the associated logger.
+    sel = selectors.DefaultSelector()
+    # key_to_lp: Dict[selectors.SelectorKey, Tuple[logging.Logger, subprocess.Popen]] = {}
+
+    while True:
+        # Either:
+        # a) add another selector based off the queue, or
+        # b) read from selectors.
+        try:
+            lp = logs_q.get_nowait()
+        except Empty:
+            lp = None
+
+        if lp is not None:
+            logger, p = lp
+            if p.stdout is not None:
+                sel.register(p.stdout, selectors.EVENT_WRITE, (logger, p))
+            if p.stderr is not None:
+                sel.register(p.stderr, selectors.EVENT_WRITE, (logger, p))
+        else:
+            events = sel.select(timeout=0)
+            for key, _ in events:
+                logger, p = cast(Tuple[logging.Logger, Popen], key.data)
+                stream = cast(IO, key.fileobj)
+                logger.debug(stream.readline().decode())
+
+                if p.poll() is not None:
+                    if p.stdout is not None:
+                        sel.unregister(p.stdout)
+                    if p.stderr is not None:
+                        sel.unregister(p.stderr)
+                    logger.debug(stream.read().decode())
+
+
+def generate_lines_out(p: Popen[bytes]) -> Iterator[bytes]:
+    if p.stdout is None:
+        raise ValueError("Expected Popen to have a non-None standard out!")
+    while p.poll() is None:
+        yield p.stdout.readline()
+    yield p.stdout.read()
+
+
+logging_thread = threading.Thread(target=process_background_logs)
+logging_thread.daemon = True  # so the thread terminates on exit.
+logging_thread.start()
+def log_nonblocking(logger: logging.Logger, p: Popen):
+    logger.debug(f"NON-BLOCKING COMMAND: {p.args}")
+    logs_q.put((logger, p))
+
+
+def log_blocking(logger: logging.Logger, p: Popen[bytes]):
+    logger.debug(f"BLOCKING COMMAND: {p.args}")
+    assert p.stdout is not None
+    while p.poll() is None:
+        logger.debug(p.stdout.readline().decode())
+    logger.debug(p.stdout.read().decode())
+
+
 if __name__ == "__main__":
     default_command_id = "gpt35turbo"
 
@@ -68,8 +137,8 @@ if __name__ == "__main__":
     run_id = f"{time.time()}_swebench_{command_id}"
     max_total: int | None = args.ntasks
     dataset_path = "princeton-nlp/SWE-bench_Lite"
-    split = "dev"
-    ds = cast(List[SWEBenchTask], list(load_dataset(dataset_path, split="dev")))[:max_total]
+    split = args.split
+    ds = cast(List[SWEBenchTask], list(load_dataset(dataset_path, split=split)))[:max_total]
     tasks = ds[:max_total or len(ds)]
     total = len(tasks)
     # just a list of patch strings.
@@ -90,9 +159,7 @@ if __name__ == "__main__":
         Returns at index
             0: Logger for entire container (DEBUG+),
             1: Logger for plaintext response (DEBUG+),
-        
-            container
-            +--> plaintext
+            both are children of the module_logger.
         """
         base = CURRENT_RUN / name
         base.mkdir(parents=True, exist_ok=True)
@@ -103,7 +170,7 @@ if __name__ == "__main__":
         container_handler.setFormatter(formatter)
         container_logger.addHandler(container_handler)
 
-        plain_logger = container_logger.getChild("plain")
+        plain_logger = module_logger.getChild("plain")
         plain_file_handler = logging.FileHandler(base / "plain.log")
         plain_file_handler.setLevel(logging.DEBUG)
         plain_file_handler.terminator = ""
@@ -116,8 +183,7 @@ if __name__ == "__main__":
         for r in repos:
             name = r.replace("/", "__")
             remote = f"https://github.com/swe-bench/{name}.git"
-            out = subprocess.run(["git", "clone", remote], cwd=repos_dir, stdout=PIPE, stderr=STDOUT).stdout
-            module_logger.debug(out.decode())
+            log_blocking(module_logger, Popen(["git", "clone", remote], cwd=repos_dir, stdout=PIPE, stderr=STDOUT))
 
         def run_task(task: SWEBenchTask, command: OpenInterpreterCommand) -> SWEBenchPrediction:
             container_name = f"{task['instance_id']}_{time.time()}"
@@ -131,44 +197,36 @@ if __name__ == "__main__":
             ):
                 # download repository.
                 repo = task["repo"].replace("/", "__")
-                out = subprocess.run(["cp", "-R", f"{repos_dir}/{repo}", f"{td}/repo"], stdout=PIPE, stderr=STDOUT).stdout
-                container_log.debug(out.decode())
+                log_blocking(container_log, Popen(["cp", "-R", f"{repos_dir}/{repo}", f"{td}/repo"], stdout=PIPE, stderr=STDOUT))
+
+                log_blocking(
+                    container_log,
+                    Popen(
+                        dexec_cmd(container_id, ["--workdir", "/main/repo"], ["sh", "-c", f"git checkout {task['base_commit']}"]),
+                        stdout=PIPE,
+                        stderr=STDOUT))
 
                 command_json_str = json.dumps(command)
-                p = subprocess.Popen(
-                    ["docker", "exec", "-t", container_id, "python", "-m", "worker.run", command_json_str, "/main"],
-                    stdout=PIPE,
-                    stderr=STDOUT)
-                
-                logs_so_far = StringIO()
-                def write(bs: bytes):
-                    module_logger.debug(bs.decode().rstrip())
-                    logs_so_far.write(bs.decode())
-                
-                # response = StringIO()
-                def write_oi_response(bs: bytes):
-                    # print(bs.decode(), end="")
-                    # log.write(bs.decode())
-                    response_log.debug(bs.decode())
-                    # response.write(bs.decode())
-                
-                assert p.stdout is not None
-                while p.poll() is None:
-                    write(p.stdout.readline())
-                    if "Uvicorn running" in logs_so_far.getvalue():
+                p = Popen(dexec_cmd(container_id, [], ["python", "-m", "worker.run", command_json_str, "/main/repo"]), stdout=PIPE, stderr=STDOUT)
+                for line in generate_lines_out(p):
+                    if "Uvicorn running" in line.decode():
                         break
-            
+                log_nonblocking(container_log, p)
+                
                 prompt = "\n".join([
-                    "Edit the repo in 'repo' until you solve the following problem:",
+                    "Edit the repo in the cwd until you solve the following problem.  Actually edit the files you think will solve the problem.",
                     f"PROBLEM: {task['problem_statement']}",
                 ])
-                talk_to_oi_server(f"localhost:{port}", prompt, write_oi_response)
+                talk_to_oi_server(f"localhost:{port}", prompt, lambda bs: response_log.debug(bs.decode()))
 
-                out = subprocess.run(
-                    ["docker", "exec", "--workdir", "/main/repo", "-t", container_id, "sh", "-c", "git diff > ../diff.patch"],
-                    stdout=PIPE,
-                    stderr=STDOUT).stdout
-                container_log.debug(out.decode())
+                # Generate the diff of staged changes
+                log_blocking(
+                    container_log,
+                    Popen(
+                        # ["docker", "exec", "--workdir", "/main/repo", "-t", container_id, "sh", "-c", "git add --all && git diff --cached > ../diff.patch"],
+                        dexec_cmd(container_id, ["--workdir", "/main/repo"], ["sh", "-c", "git add --all && git diff --cached > ../diff.patch"]),
+                        stdout=PIPE,
+                        stderr=STDOUT))
 
                 with open(f"{td}/diff.patch", "r") as f:
                     container_log.debug("DIFF:")
