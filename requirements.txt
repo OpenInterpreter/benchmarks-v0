@@ -6,3 +6,4 @@ websockets
 rich
 e2b
 hypercorn
+fastapi

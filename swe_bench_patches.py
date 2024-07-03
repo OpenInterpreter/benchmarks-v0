@@ -4,6 +4,7 @@ from io import BytesIO, StringIO
 import json
 import logging
 import os
+from pathlib import Path
 from queue import Empty, Queue
 import selectors
 import shlex
@@ -11,6 +12,7 @@ from subprocess import Popen, PIPE, STDOUT, run
 from tempfile import TemporaryDirectory
 import threading
 import time
+import traceback
 from typing import IO, Dict, Iterator, List, Literal, Optional, Tuple, TypedDict, cast
 from datasets import load_dataset
 from commands import OpenInterpreterCommand
@@ -51,16 +53,27 @@ def dexec_cmd(container_id: str, exec_args: List[str], cmd: List[str]) -> List[s
     arguments to the `exec` call, and piping stdout and stderr to the docker desktop logger.
     
     Assumes anything else being logged to Docker Desktop is trash.
+
+    Args:
+        - container_id: the container identifier as printed to stdout when `docker run -d ...` was originally run.
+        - exec_args: a list of arguments to pass into the call to `docker exec...`.
+        - cmd: the command to be run on the container as a list of tokens.
+    
+    Returns:
+        The full command to run on the host machine to invoke `cmd` in the container.  Does not run in the container's shell.
     """
     return ["docker", "exec", "-t", *exec_args, container_id, *cmd]
-    # return ["docker", "exec", "-t", *exec_args, container_id, "sh", "-c", f"{' '.join(cmd)} > /proc/1/fd/1 2>/proc/1/fd/2"]
 
 
-logs_q: Queue[Tuple[logging.Logger, Popen]] = Queue()
-def process_background_logs():
-    # the data being registered in each instance is the associated logger.
+logs_q: Queue[Tuple[logging.Logger, Popen[bytes]]] = Queue()
+def _process_background_logs():
+    """
+    This function manages the thread that enables non-blocking subprocess logging.  It's very silly and is the reason this
+    script doesn't work as described on Windows.
+    """
+
+    # the data being registered in each instance is the tuple (Logger, Popen).
     sel = selectors.DefaultSelector()
-    # key_to_lp: Dict[selectors.SelectorKey, Tuple[logging.Logger, subprocess.Popen]] = {}
 
     while True:
         # Either:
@@ -74,33 +87,43 @@ def process_background_logs():
         if lp is not None:
             logger, p = lp
             if p.stdout is not None:
-                sel.register(p.stdout, selectors.EVENT_WRITE, (logger, p))
+                sel.register(p.stdout, selectors.EVENT_READ, (logger, p))
             if p.stderr is not None:
-                sel.register(p.stderr, selectors.EVENT_WRITE, (logger, p))
+                sel.register(p.stderr, selectors.EVENT_READ, (logger, p))
         else:
             events = sel.select(timeout=0)
             for key, _ in events:
-                logger, p = cast(Tuple[logging.Logger, Popen], key.data)
-                stream = cast(IO, key.fileobj)
-                logger.debug(stream.readline().decode())
+                logger, p = cast(Tuple[logging.Logger, Popen[bytes]], key.data)
+                stream = cast(IO[bytes], key.fileobj)
+                logger.debug(stream.readline().decode().rstrip())
 
                 if p.poll() is not None:
                     if p.stdout is not None:
                         sel.unregister(p.stdout)
                     if p.stderr is not None:
                         sel.unregister(p.stderr)
-                    logger.debug(stream.read().decode())
+                    logger.debug(stream.read().decode().rstrip())
 
 
 def generate_lines_out(p: Popen[bytes]) -> Iterator[bytes]:
+    """
+    Takes in a Popen whose stdout spits out bytes.
+
+    Args:
+        - p: a Popen that spits out bytes.
+    
+    Returns:
+        An iterator over the lines as they are written to `p`'s stdout.
+    """
+
     if p.stdout is None:
         raise ValueError("Expected Popen to have a non-None standard out!")
     while p.poll() is None:
-        yield p.stdout.readline()
-    yield p.stdout.read()
+        yield p.stdout.readline().rstrip()
+    yield p.stdout.read().rstrip()
 
 
-logging_thread = threading.Thread(target=process_background_logs)
+logging_thread = threading.Thread(target=_process_background_logs)
 logging_thread.daemon = True  # so the thread terminates on exit.
 logging_thread.start()
 def log_nonblocking(logger: logging.Logger, p: Popen):
@@ -112,16 +135,49 @@ def log_blocking(logger: logging.Logger, p: Popen[bytes]):
     logger.debug(f"BLOCKING COMMAND: {p.args}")
     assert p.stdout is not None
     while p.poll() is None:
-        logger.debug(p.stdout.readline().decode())
-    logger.debug(p.stdout.read().decode())
+        logger.debug(p.stdout.readline().decode().strip())
+    logger.debug(p.stdout.read().decode().strip())
+
+
+def make_task_loggers(run_dir: Path, task_name: str) -> Tuple[logging.Logger, logging.Logger]:
+    """
+    Creates folders to put logging stuff if they don't exist.
+
+    Args:
+        - run_dir: the path to the directory storing the current run's logs.
+        - task_name: the name of the current task.
+
+    Returns the tuple:
+        0: Logger for entire container (DEBUG+).
+        1: Logger for plaintext response (DEBUG+).
+        Both are children of the module_logger.
+    """
+    base = run_dir / task_name
+    base.mkdir(parents=True, exist_ok=True)
+    common_logger = module_logger.getChild(name)
+
+    container_logger = common_logger.getChild("container")
+    container_handler = logging.FileHandler(base / "container.log")
+    container_handler.setLevel(logging.DEBUG)
+    container_handler.setFormatter(formatter)
+    container_logger.addHandler(container_handler)
+
+    plain_logger = common_logger.getChild("plain")
+    plain_file_handler = logging.FileHandler(base / "plain.log")
+    plain_file_handler.setLevel(logging.DEBUG)
+    plain_file_handler.terminator = ""
+    plain_logger.addHandler(plain_file_handler)
+
+    return container_logger, plain_logger
 
 
 if __name__ == "__main__":
     default_command_id = "gpt35turbo"
+    default_split = "dev"
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--command", action="store", type=str, default=default_command_id)
-    parser.add_argument("-s", "--split", action="store", type=str, default="dev")
+    parser.add_argument("-s", "--split", action="store", type=str, default=default_split)
     parser.add_argument("-nt", "--ntasks", action="store", type=int)
     parser.add_argument("-nw", "--nworkers", action="store", type=int)
     args = parser.parse_args(namespace=ArgumentsNamespace())
@@ -152,32 +208,6 @@ if __name__ == "__main__":
     run_file_handler.setFormatter(formatter)
     module_logger.addHandler(run_file_handler)
 
-    def make_loggers(name: str) -> Tuple[logging.Logger, logging.Logger]:
-        """
-        Creates folders to put logging stuff if they don't exist.
-
-        Returns at index
-            0: Logger for entire container (DEBUG+),
-            1: Logger for plaintext response (DEBUG+),
-            both are children of the module_logger.
-        """
-        base = CURRENT_RUN / name
-        base.mkdir(parents=True, exist_ok=True)
-
-        container_logger = module_logger.getChild(name)
-        container_handler = logging.FileHandler(base / "container.log")
-        container_handler.setLevel(logging.DEBUG)
-        container_handler.setFormatter(formatter)
-        container_logger.addHandler(container_handler)
-
-        plain_logger = module_logger.getChild("plain")
-        plain_file_handler = logging.FileHandler(base / "plain.log")
-        plain_file_handler.setLevel(logging.DEBUG)
-        plain_file_handler.terminator = ""
-        plain_logger.addHandler(plain_file_handler)
-
-        return container_logger, plain_logger
-
     with TemporaryDirectory() as repos_dir:
         repos = set(t["repo"] for t in tasks)
         for r in repos:
@@ -187,7 +217,7 @@ if __name__ == "__main__":
 
         def run_task(task: SWEBenchTask, command: OpenInterpreterCommand) -> SWEBenchPrediction:
             container_name = f"{task['instance_id']}_{time.time()}"
-            container_log, response_log = make_loggers(container_name)
+            container_log, response_log = make_task_loggers(CURRENT_RUN, container_name)
             worker_name = "server-worker"
 
             port = get_free_port()
@@ -197,7 +227,9 @@ if __name__ == "__main__":
             ):
                 # download repository.
                 repo = task["repo"].replace("/", "__")
-                log_blocking(container_log, Popen(["cp", "-R", f"{repos_dir}/{repo}", f"{td}/repo"], stdout=PIPE, stderr=STDOUT))
+                log_blocking(
+                    container_log,
+                    Popen(["cp", "-R", f"{repos_dir}/{repo}", f"{td}/repo"], stdout=PIPE, stderr=STDOUT))
 
                 log_blocking(
                     container_log,
@@ -223,7 +255,6 @@ if __name__ == "__main__":
                 log_blocking(
                     container_log,
                     Popen(
-                        # ["docker", "exec", "--workdir", "/main/repo", "-t", container_id, "sh", "-c", "git add --all && git diff --cached > ../diff.patch"],
                         dexec_cmd(container_id, ["--workdir", "/main/repo"], ["sh", "-c", "git add --all && git diff --cached > ../diff.patch"]),
                         stdout=PIPE,
                         stderr=STDOUT))
@@ -267,7 +298,11 @@ if __name__ == "__main__":
             futures = [pool.submit(fn, *args) for fn, args in apps]
             
             for f in as_completed(futures):
-                patches.append(f.result())
+                try:
+                    patches.append(f.result())
+                except TimeoutError:
+                    # 
+                    module_logger.exception(traceback.format_exc())
             
             module_logger.info("Finished!")
 

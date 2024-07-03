@@ -9,7 +9,7 @@ import shlex
 import subprocess
 from tempfile import TemporaryDirectory
 import time
-from typing import Any, Callable, Iterator, List, Tuple, TypeVar, cast, override
+from typing import Any, Callable, Iterator, List, Tuple, TypeVar, cast
 from rich.console import Console
 from websockets import ConnectionClosed
 from websockets.sync.client import connect
