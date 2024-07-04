@@ -13,13 +13,15 @@ from tempfile import TemporaryDirectory
 import threading
 import time
 import traceback
-from typing import IO, Dict, Iterator, List, Literal, Optional, Tuple, TypedDict, cast
+from typing import IO, Callable, Dict, Generic, Iterator, List, Literal, Optional, Tuple, TypeVar, TypedDict, cast
 from datasets import load_dataset
+from fastapi import FastAPI
+from fastapi.templating import Jinja2Templates
 from commands import OpenInterpreterCommand
 from constants import LOCAL
 from runners import docker_daemon, get_free_port, talk_to_oi_server
 from swe_bench import SWEBenchTask
-from coordinators import TaskLifecycle
+from coordinators import TaskLifecycle, WebSocketsManager
 from commands import commands
 
 root_logger = logging.getLogger()
@@ -139,7 +141,7 @@ def log_blocking(logger: logging.Logger, p: Popen[bytes]):
     logger.debug(p.stdout.read().decode().strip())
 
 
-def make_task_loggers(run_dir: Path, task_name: str) -> Tuple[logging.Logger, logging.Logger]:
+def make_task_loggers(run_dir: Path, parent_logger: logging.Logger, task_id: str) -> Tuple[logging.Logger, logging.Logger]:
     """
     Creates folders to put logging stuff if they don't exist.
 
@@ -152,9 +154,9 @@ def make_task_loggers(run_dir: Path, task_name: str) -> Tuple[logging.Logger, lo
         1: Logger for plaintext oi response (DEBUG+).
         Both are children of the module_logger.
     """
-    base = run_dir / task_name
+    base = run_dir / task_id
     base.mkdir(parents=True, exist_ok=True)
-    common_logger = module_logger.getChild(task_name)
+    common_logger = parent_logger
 
     container_logger = common_logger.getChild("container")
     container_handler = logging.FileHandler(base / "container.log")
@@ -169,6 +171,143 @@ def make_task_loggers(run_dir: Path, task_name: str) -> Tuple[logging.Logger, lo
     plain_logger.addHandler(plain_file_handler)
 
     return container_logger, plain_logger
+
+
+SWEBenchRunner = Callable[[SWEBenchTask, OpenInterpreterCommand, logging.Logger], SWEBenchPrediction]
+
+
+def swe_bench_docker_runner() -> SWEBenchRunner:
+    repos = set(t["repo"] for t in tasks)
+    for r in repos:
+        name = r.replace("/", "__")
+        remote = f"https://github.com/swe-bench/{name}.git"
+        log_blocking(module_logger, Popen(["git", "clone", remote], cwd=repos_dir, stdout=PIPE, stderr=STDOUT))
+
+    def run(task: SWEBenchTask, command: OpenInterpreterCommand, task_logger: logging.Logger) -> SWEBenchPrediction:
+        container_log, response_log = make_task_loggers(CURRENT_RUN, task_logger, task["instance_id"])
+        worker_name = "server-worker"
+
+        container_name = f"{task['instance_id']}_{time.time()}"
+        port = get_free_port()
+        with (
+            TemporaryDirectory() as td,
+            docker_daemon(worker_name, ["--name", container_name, "-v", f"{td}:/main", "-p", f"{port}:8000"]) as container_id,
+        ):
+            # download repository.
+            repo = task["repo"].replace("/", "__")
+            log_blocking(
+                container_log,
+                Popen(["cp", "-R", f"{repos_dir}/{repo}", f"{td}/repo"], stdout=PIPE, stderr=STDOUT))
+
+            log_blocking(
+                container_log,
+                Popen(
+                    dexec_cmd(container_id, ["--workdir", "/main/repo"], ["sh", "-c", f"git checkout {task['base_commit']}"]),
+                    stdout=PIPE,
+                    stderr=STDOUT))
+
+            command_json_str = json.dumps(command)
+            p = Popen(dexec_cmd(container_id, [], ["python", "-m", "worker.run", command_json_str, "/main/repo"]), stdout=PIPE, stderr=STDOUT)
+            for line in generate_lines_out(p):
+                if "Uvicorn running" in line.decode():
+                    break
+            log_nonblocking(container_log, p)
+            
+            prompt = "\n".join([
+                "Edit the repo in the cwd until you solve the following problem.  Actually edit the files you think will solve the problem.",
+                f"PROBLEM: {task['problem_statement']}",
+            ])
+            talk_to_oi_server(f"localhost:{port}", prompt, lambda bs: response_log.debug(bs.decode()))
+
+            # Generate the diff of staged changes
+            log_blocking(
+                container_log,
+                Popen(
+                    dexec_cmd(container_id, ["--workdir", "/main/repo"], ["sh", "-c", "git add --all && git diff --cached > ../diff.patch"]),
+                    stdout=PIPE,
+                    stderr=STDOUT))
+
+            with open(f"{td}/diff.patch", "r") as f:
+                container_log.debug("DIFF:")
+                diff = f.read()
+
+        return {
+            "instance_id": task["instance_id"],
+            "model_patch": diff,
+            "model_name_or_path": command["model"] if "model" in command else "<N/A>"
+        }
+
+    return run
+
+
+def swe_bench_e2b_runner() -> SWEBenchRunner:
+    repos = set(t["repo"] for t in tasks)
+    for r in repos:
+        name = r.replace("/", "__")
+        remote = f"https://github.com/swe-bench/{name}.git"
+        log_blocking(module_logger, Popen(["git", "clone", remote], cwd=repos_dir, stdout=PIPE, stderr=STDOUT))
+
+    def run(task: SWEBenchTask, command: OpenInterpreterCommand, task_logger: logging.Logger) -> SWEBenchPrediction:
+        container_log, response_log = make_task_loggers(CURRENT_RUN, task_logger, task["instance_id"])
+        worker_name = "server-worker"
+
+        container_name = f"{task['instance_id']}_{time.time()}"
+        port = get_free_port()
+        with (
+            TemporaryDirectory() as td,
+            docker_daemon(worker_name, ["--name", container_name, "-v", f"{td}:/main", "-p", f"{port}:8000"]) as container_id,
+        ):
+            # download repository.
+            repo = task["repo"].replace("/", "__")
+            log_blocking(
+                container_log,
+                Popen(["cp", "-R", f"{repos_dir}/{repo}", f"{td}/repo"], stdout=PIPE, stderr=STDOUT))
+
+            log_blocking(
+                container_log,
+                Popen(
+                    dexec_cmd(container_id, ["--workdir", "/main/repo"], ["sh", "-c", f"git checkout {task['base_commit']}"]),
+                    stdout=PIPE,
+                    stderr=STDOUT))
+
+            command_json_str = json.dumps(command)
+            p = Popen(dexec_cmd(container_id, [], ["python", "-m", "worker.run", command_json_str, "/main/repo"]), stdout=PIPE, stderr=STDOUT)
+            for line in generate_lines_out(p):
+                if "Uvicorn running" in line.decode():
+                    break
+            log_nonblocking(container_log, p)
+            
+            prompt = "\n".join([
+                "Edit the repo in the cwd until you solve the following problem.  Actually edit the files you think will solve the problem.",
+                f"PROBLEM: {task['problem_statement']}",
+            ])
+            talk_to_oi_server(f"localhost:{port}", prompt, lambda bs: response_log.debug(bs.decode()))
+
+            # Generate the diff of staged changes
+            log_blocking(
+                container_log,
+                Popen(
+                    dexec_cmd(container_id, ["--workdir", "/main/repo"], ["sh", "-c", "git add --all && git diff --cached > ../diff.patch"]),
+                    stdout=PIPE,
+                    stderr=STDOUT))
+
+            with open(f"{td}/diff.patch", "r") as f:
+                container_log.debug("DIFF:")
+                diff = f.read()
+
+        return {
+            "instance_id": task["instance_id"],
+            "model_patch": diff,
+            "model_name_or_path": command["model"] if "model" in command else "<N/A>"
+        }
+
+    return run
+
+
+Task = TypeVar("Task")
+class GeneralizedTask(TypedDict, Generic[Task]):
+    id: str
+    task: Task
 
 
 if __name__ == "__main__":
@@ -200,6 +339,15 @@ if __name__ == "__main__":
     # just a list of patch strings.
     patches: List[str] = []
 
+    # instance_id: { "id": ..., task: ... }
+    tasks_map = {
+        task["instance_id"]: {
+            "id": task["instance_id"],
+            "task": task,
+        }
+        for task in tasks
+    }
+
     LOGS = LOCAL / "logs"
     CURRENT_RUN = LOGS / run_id
     CURRENT_RUN.mkdir(parents=True, exist_ok=True)
@@ -209,65 +357,16 @@ if __name__ == "__main__":
     module_logger.addHandler(run_file_handler)
 
     with TemporaryDirectory() as repos_dir:
-        repos = set(t["repo"] for t in tasks)
-        for r in repos:
-            name = r.replace("/", "__")
-            remote = f"https://github.com/swe-bench/{name}.git"
-            log_blocking(module_logger, Popen(["git", "clone", remote], cwd=repos_dir, stdout=PIPE, stderr=STDOUT))
+        runner = swe_bench_docker_runner()
 
         def run_task(task: SWEBenchTask, command: OpenInterpreterCommand) -> SWEBenchPrediction:
-            container_name = f"{task['instance_id']}_{time.time()}"
-            container_log, response_log = make_task_loggers(CURRENT_RUN, container_name)
-            worker_name = "server-worker"
-
-            port = get_free_port()
-            with (
-                TemporaryDirectory() as td,
-                docker_daemon(worker_name, ["--name", container_name, "-v", f"{td}:/main", "-p", f"{port}:8000"]) as container_id,
-            ):
-                # download repository.
-                repo = task["repo"].replace("/", "__")
-                log_blocking(
-                    container_log,
-                    Popen(["cp", "-R", f"{repos_dir}/{repo}", f"{td}/repo"], stdout=PIPE, stderr=STDOUT))
-
-                log_blocking(
-                    container_log,
-                    Popen(
-                        dexec_cmd(container_id, ["--workdir", "/main/repo"], ["sh", "-c", f"git checkout {task['base_commit']}"]),
-                        stdout=PIPE,
-                        stderr=STDOUT))
-
-                command_json_str = json.dumps(command)
-                p = Popen(dexec_cmd(container_id, [], ["python", "-m", "worker.run", command_json_str, "/main/repo"]), stdout=PIPE, stderr=STDOUT)
-                for line in generate_lines_out(p):
-                    if "Uvicorn running" in line.decode():
-                        break
-                log_nonblocking(container_log, p)
-                
-                prompt = "\n".join([
-                    "Edit the repo in the cwd until you solve the following problem.  Actually edit the files you think will solve the problem.",
-                    f"PROBLEM: {task['problem_statement']}",
-                ])
-                talk_to_oi_server(f"localhost:{port}", prompt, lambda bs: response_log.debug(bs.decode()))
-
-                # Generate the diff of staged changes
-                log_blocking(
-                    container_log,
-                    Popen(
-                        dexec_cmd(container_id, ["--workdir", "/main/repo"], ["sh", "-c", "git add --all && git diff --cached > ../diff.patch"]),
-                        stdout=PIPE,
-                        stderr=STDOUT))
-
-                with open(f"{td}/diff.patch", "r") as f:
-                    container_log.debug("DIFF:")
-                    diff = f.read()
-
-            return {
-                "instance_id": task["instance_id"],
-                "model_patch": diff,
-                "model_name_or_path": command["model"] if "model" in command else "<N/A>"
-            }
+            task_logger = module_logger.getChild(task["instance_id"])
+            try:
+                result = runner(task, command, task_logger)
+            except BaseException as e:
+                task_logger.exception(traceback.format_exc())
+            
+            return result
 
         with ThreadPoolExecutor(max_workers=args.nworkers) as pool:
             n_finished_lock = threading.Lock()
@@ -298,11 +397,7 @@ if __name__ == "__main__":
             futures = [pool.submit(fn, *args) for fn, args in apps]
             
             for f in as_completed(futures):
-                try:
-                    patches.append(f.result())
-                except TimeoutError:
-                    # 
-                    module_logger.exception(traceback.format_exc())
+                patches.append(f.result())
             
             module_logger.info("Finished!")
 
