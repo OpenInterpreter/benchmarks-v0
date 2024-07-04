@@ -191,6 +191,12 @@ class DockerBenchmarkRunner(BenchmarkRunner):
             with open(messages_path) as f:
                 messages = json.load(f)
                 return messages
+
+
+runners = {
+    "docker": DockerBenchmarkRunner(),
+    "host": DefaultBenchmarkRunner(),
+}
     
 
 def run_benchmark(benchmark: TasksStore, mod: TaskSetModifier, command: OpenInterpreterCommand) -> List[TaskResult]:

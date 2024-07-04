@@ -140,4 +140,3 @@ interpreter.auto_run = True
 interpreter.offline = True
 
 interpreter.llm.model = "groq/llama3-70b-8192"
-interpreter.llm.api_key = "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"
