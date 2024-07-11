@@ -1,4 +1,4 @@
 jsonschema
-git+https://github.com/imapersonman/open-interpreter.git@benchmarks-debugging
+open-interpreter[server] @ git+https://github.com/OpenInterpreter/open-interpreter.git@main
 uvicorn
 fastapi

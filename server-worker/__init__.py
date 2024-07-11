@@ -1,13 +1,12 @@
 from pathlib import Path
-import traceback
-from typing import Any, Dict, List, cast
-from interpreter import OpenInterpreter
+from typing import Any, Dict
+from interpreter import OpenInterpreter, AsyncInterpreter
 
 
 OUTPUT_PATH = Path("messages.json")
 
 
-def command_to_interpreter(cmd: Dict[str, Any]) -> OpenInterpreter:
+def command_to_interpreter(cmd: Dict[str, Any]) -> AsyncInterpreter:
     from .profile import interpreter
 
     interpreter.llm.model = cmd.get("model", interpreter.llm.model)  # type: ignore
@@ -25,7 +24,6 @@ def run(command: Dict[str, Any]) -> None:
     interpreter = command_to_interpreter(command)
 
     try:
-        interpreter.server()
+        interpreter.server.run()
     finally:
         interpreter.computer.terminate()
-    

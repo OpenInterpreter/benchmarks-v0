@@ -8,7 +8,7 @@ from typing import List, Optional
 
 from constants import DATASETS, RESULTS
 from custom import CustomTasks
-from runners import DefaultBenchmarkRunner, DockerBenchmarkRunner, DockerEnvBenchmarkRunner, DockerServerBenchmarkRunner, E2BDesktopBenchmarkRunner, E2BServerTerminalBenchmarkRunner, E2BTerminalBenchmarkRunner, FakeBenchmarkRunner
+from runners import DefaultBenchmarkRunner, DockerBenchmarkRunner, DockerServerBenchmarkRunner, E2BDesktopBenchmarkRunner, E2BServerTerminalBenchmarkRunner, E2BTerminalBenchmarkRunner, FakeBenchmarkRunner
 from modifiers import ModifierPipe, PredModifier, SizeOffsetModifier
 from coordinators import OIBenchmarks, TaskResult
 from commands import commands

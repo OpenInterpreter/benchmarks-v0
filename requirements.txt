@@ -1,9 +1,11 @@
 datasets
 jsonschema
-git+https://github.com/imapersonman/open-interpreter.git@sleepy-server
+open-interpreter
 fsspec
 websockets
 rich
-e2b
+e2b==0.17.2a23
+# e2b
 hypercorn
 fastapi
+requests

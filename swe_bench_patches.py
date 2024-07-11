@@ -1,22 +1,26 @@
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
 from io import BytesIO, StringIO
 import json
-import logging
 import os
 from pathlib import Path
 from queue import Empty, Queue
 import selectors
 import shlex
-from subprocess import Popen, PIPE, STDOUT, run
+from subprocess import Popen, PIPE, STDOUT, run as sp_run
 from tempfile import TemporaryDirectory
 import threading
 import time
 import traceback
-from typing import IO, Callable, Dict, Generic, Iterator, List, Literal, Optional, Tuple, TypeVar, TypedDict, cast
+import logging
+from typing import IO, Callable, ContextManager, Dict, Generic, Iterator, List, Literal, Optional, Tuple, TypeVar, TypedDict, cast
+from e2b import Sandbox
+from logging import Logger
 from datasets import load_dataset
 from fastapi import FastAPI
 from fastapi.templating import Jinja2Templates
+import requests
 from commands import OpenInterpreterCommand
 from constants import LOCAL
 from runners import docker_daemon, get_free_port, talk_to_oi_server
@@ -128,12 +132,34 @@ def generate_lines_out(p: Popen[bytes]) -> Iterator[bytes]:
 logging_thread = threading.Thread(target=_process_background_logs)
 logging_thread.daemon = True  # so the thread terminates on exit.
 logging_thread.start()
-def log_nonblocking(logger: logging.Logger, p: Popen):
+def log_nonblocking(logger: Logger, p: Popen):
     logger.debug(f"NON-BLOCKING COMMAND: {p.args}")
     logs_q.put((logger, p))
 
 
-def log_blocking(logger: logging.Logger, p: Popen[bytes]):
+def log_nonblocking_thread(logger: Logger, p: Popen[bytes]):
+    def log(message: str):
+        if len(message.strip()) > 0:
+            logger.debug(f"NONBLOCKING THREAD: {message}")
+
+    def run_logging_thread():
+        time.sleep(0.1)  # booooooo why aren't the readlines blocking anymore??
+        while p.poll() is not None:
+            if p.stdout is not None:
+                log(p.stdout.readline().decode())
+            if p.stderr is not None:
+                log(p.stderr.readline().decode())
+        if p.stdout is not None:
+            log(p.stdout.read().decode())
+        if p.stderr is not None:
+            log(p.stderr.read().decode())
+
+    t = threading.Thread(target=run_logging_thread)
+    t.daemon = True
+    t.start()
+
+
+def log_blocking(logger: Logger, p: Popen[bytes]):
     logger.debug(f"BLOCKING COMMAND: {p.args}")
     assert p.stdout is not None
     while p.poll() is None:
@@ -158,6 +184,7 @@ def make_task_loggers(run_dir: Path, parent_logger: logging.Logger, task_id: str
     base.mkdir(parents=True, exist_ok=True)
     common_logger = parent_logger
 
+    # container_logger = common_logger.getChild("container")
     container_logger = common_logger.getChild("container")
     container_handler = logging.FileHandler(base / "container.log")
     container_handler.setLevel(logging.DEBUG)
@@ -173,135 +200,167 @@ def make_task_loggers(run_dir: Path, parent_logger: logging.Logger, task_id: str
     return container_logger, plain_logger
 
 
-SWEBenchRunner = Callable[[SWEBenchTask, OpenInterpreterCommand, logging.Logger], SWEBenchPrediction]
+def make_container_loggers(run_dir: Path, parent_logger: logging.Logger, task_id: str) -> Tuple[logging.Logger, logging.Logger]:
+    """
+    Creates folders to put logging stuff if they don't exist.
+
+    Args:
+        - run_dir: the path to the directory storing the current run's logs.
+        - task_name: the name of the current task.
+
+    Returns the tuple:
+        0: Logger for container (DEBUG+).
+        1: Logger for plaintext oi response (DEBUG+).
+        Both are children of the module_logger.
+    """
+    base = run_dir / task_id
+    base.mkdir(parents=True, exist_ok=True)
+    # common_logger = parent_logger
+    common_logger = parent_logger.getChild(task_id)
+
+    # container_logger = common_logger.getChild("container")
+    # container_logger = common_logger.getChild("container")
+    container_logger = common_logger.getChild("container")
+    container_handler = logging.FileHandler(base / "container.log")
+    container_handler.setLevel(logging.DEBUG)
+    container_handler.setFormatter(formatter)
+    container_logger.addHandler(container_handler)
+
+    plain_logger = common_logger.getChild("plain")
+    plain_file_handler = logging.FileHandler(base / "plain.log")
+    plain_file_handler.setLevel(logging.DEBUG)
+    plain_file_handler.terminator = ""
+    plain_logger.addHandler(plain_file_handler)
+
+    return container_logger, plain_logger
 
 
-def swe_bench_docker_runner() -> SWEBenchRunner:
-    repos = set(t["repo"] for t in tasks)
-    for r in repos:
-        name = r.replace("/", "__")
-        remote = f"https://github.com/swe-bench/{name}.git"
-        log_blocking(module_logger, Popen(["git", "clone", remote], cwd=repos_dir, stdout=PIPE, stderr=STDOUT))
-
-    def run(task: SWEBenchTask, command: OpenInterpreterCommand, task_logger: logging.Logger) -> SWEBenchPrediction:
-        container_log, response_log = make_task_loggers(CURRENT_RUN, task_logger, task["instance_id"])
-        worker_name = "server-worker"
-
-        container_name = f"{task['instance_id']}_{time.time()}"
-        port = get_free_port()
-        with (
-            TemporaryDirectory() as td,
-            docker_daemon(worker_name, ["--name", container_name, "-v", f"{td}:/main", "-p", f"{port}:8000"]) as container_id,
-        ):
-            # download repository.
-            repo = task["repo"].replace("/", "__")
-            log_blocking(
-                container_log,
-                Popen(["cp", "-R", f"{repos_dir}/{repo}", f"{td}/repo"], stdout=PIPE, stderr=STDOUT))
-
-            log_blocking(
-                container_log,
-                Popen(
-                    dexec_cmd(container_id, ["--workdir", "/main/repo"], ["sh", "-c", f"git checkout {task['base_commit']}"]),
-                    stdout=PIPE,
-                    stderr=STDOUT))
-
-            command_json_str = json.dumps(command)
-            p = Popen(dexec_cmd(container_id, [], ["python", "-m", "worker.run", command_json_str, "/main/repo"]), stdout=PIPE, stderr=STDOUT)
-            for line in generate_lines_out(p):
-                if "Uvicorn running" in line.decode():
-                    break
-            log_nonblocking(container_log, p)
-            
-            prompt = "\n".join([
-                "Edit the repo in the cwd until you solve the following problem.  Actually edit the files you think will solve the problem.",
-                f"PROBLEM: {task['problem_statement']}",
-            ])
-            talk_to_oi_server(f"localhost:{port}", prompt, lambda bs: response_log.debug(bs.decode()))
-
-            # Generate the diff of staged changes
-            log_blocking(
-                container_log,
-                Popen(
-                    dexec_cmd(container_id, ["--workdir", "/main/repo"], ["sh", "-c", "git add --all && git diff --cached > ../diff.patch"]),
-                    stdout=PIPE,
-                    stderr=STDOUT))
-
-            with open(f"{td}/diff.patch", "r") as f:
-                container_log.debug("DIFF:")
-                diff = f.read()
-
-        return {
-            "instance_id": task["instance_id"],
-            "model_patch": diff,
-            "model_name_or_path": command["model"] if "model" in command else "<N/A>"
-        }
-
-    return run
+SWEBenchRunner = Callable[
+    # The task
+    # The command (OI object configuration)
+    # The container-wide logger
+    # The AI response logger
+    [SWEBenchTask, OpenInterpreterCommand, logging.Logger, logging.Logger],
+    SWEBenchPrediction | None
+]
 
 
-def swe_bench_e2b_runner() -> SWEBenchRunner:
-    repos = set(t["repo"] for t in tasks)
-    for r in repos:
-        name = r.replace("/", "__")
-        remote = f"https://github.com/swe-bench/{name}.git"
-        log_blocking(module_logger, Popen(["git", "clone", remote], cwd=repos_dir, stdout=PIPE, stderr=STDOUT))
+@contextmanager
+def docker_process(image_name: str, container_name: str, docker_args: List[str], run_args: List[str] | None = None) -> Iterator[Popen[bytes]]:
+    rargs = [] if run_args is None else run_args
+    cmd = ["docker", "run", "--name", container_name, *docker_args, image_name, *rargs]
+    p = Popen(cmd, stdout=PIPE, stderr=STDOUT)
+    try:
+        yield p
+    finally:
+        sp_run(["docker", "kill", container_name])
 
-    def run(task: SWEBenchTask, command: OpenInterpreterCommand, task_logger: logging.Logger) -> SWEBenchPrediction:
-        container_log, response_log = make_task_loggers(CURRENT_RUN, task_logger, task["instance_id"])
-        worker_name = "server-worker"
 
-        container_name = f"{task['instance_id']}_{time.time()}"
-        port = get_free_port()
-        with (
-            TemporaryDirectory() as td,
-            docker_daemon(worker_name, ["--name", container_name, "-v", f"{td}:/main", "-p", f"{port}:8000"]) as container_id,
-        ):
-            # download repository.
-            repo = task["repo"].replace("/", "__")
-            log_blocking(
-                container_log,
-                Popen(["cp", "-R", f"{repos_dir}/{repo}", f"{td}/repo"], stdout=PIPE, stderr=STDOUT))
+def run_swe_bench_task_on_oi_server(normal_address: str, websocket_address: str, task: SWEBenchTask, task_logger: Logger, ai_logger: Logger) -> str:
+    """
+    Returns the diff.
+    """
+    task_logger.debug(f"NORMAL ADDRESS: {normal_address}")
+    task_logger.debug(f"WEBSOCKET ADDRESS: {websocket_address}")
 
-            log_blocking(
-                container_log,
-                Popen(
-                    dexec_cmd(container_id, ["--workdir", "/main/repo"], ["sh", "-c", f"git checkout {task['base_commit']}"]),
-                    stdout=PIPE,
-                    stderr=STDOUT))
+    while True:
+        try:
+            hb_response = requests.get(f"{normal_address}/heartbeat")
+            if hb_response.ok:
+                task_logger.debug("connected!")
+                task_logger.debug(f"HB RESPONSE: {hb_response.json()}")
+                break
+        except requests.exceptions.ConnectionError:
+            task_logger.debug("waiting to connect...")
+            time.sleep(1)
 
-            command_json_str = json.dumps(command)
-            p = Popen(dexec_cmd(container_id, [], ["python", "-m", "worker.run", command_json_str, "/main/repo"]), stdout=PIPE, stderr=STDOUT)
-            for line in generate_lines_out(p):
-                if "Uvicorn running" in line.decode():
-                    break
-            log_nonblocking(container_log, p)
-            
-            prompt = "\n".join([
-                "Edit the repo in the cwd until you solve the following problem.  Actually edit the files you think will solve the problem.",
-                f"PROBLEM: {task['problem_statement']}",
-            ])
-            talk_to_oi_server(f"localhost:{port}", prompt, lambda bs: response_log.debug(bs.decode()))
+    repo = task["repo"].replace("/", "__")
+    remote = f"https://github.com/swe-bench/{repo}.git"
 
-            # Generate the diff of staged changes
-            log_blocking(
-                container_log,
-                Popen(
-                    dexec_cmd(container_id, ["--workdir", "/main/repo"], ["sh", "-c", "git add --all && git diff --cached > ../diff.patch"]),
-                    stdout=PIPE,
-                    stderr=STDOUT))
+    clone_response = requests.post(f"{normal_address}/run", json={"language": "shell", "code": f"git clone {remote} repo"})
+    task_logger.debug(f"THE CLONE RESPONSE: {clone_response.json()}")
 
-            with open(f"{td}/diff.patch", "r") as f:
-                container_log.debug("DIFF:")
-                diff = f.read()
+    cd_response = requests.post(f"{normal_address}/run", json={"language": "shell", "code": "cd repo"})
+    task_logger.debug(f"THE CD RESPONSE: {cd_response.json()}")
 
-        return {
-            "instance_id": task["instance_id"],
-            "model_patch": diff,
-            "model_name_or_path": command["model"] if "model" in command else "<N/A>"
-        }
+    checkout_response = requests.post(f"{normal_address}/run", json={"language": "shell", "code": f"git checkout {task['base_commit']}"})
+    task_logger.debug(f"THE CHECKOUT RESPONSE: {checkout_response.json()}")
 
-    return run
+    prompt = "\n".join([
+        "Edit the repo in the cwd until you solve the following problem.  Actually edit the files you think will solve the problem.",
+        f"PROBLEM: {task['problem_statement']}",
+    ])
+    talk_to_oi_server(websocket_address, prompt, lambda bs: ai_logger.debug(bs.decode()))
+
+    diff_response = requests.post(f"{normal_address}/run", json={"language": "shell", "code": "git add --all && git diff --cached"})
+    diff = cast(str, diff_response.json()["output"][0]["content"]).rstrip()
+    task_logger.debug(f"THE DIFF RESPONSE: {diff}")
+    return diff
+
+
+def swe_bench_docker_runner_with_run_endpoint(task: SWEBenchTask, command: OpenInterpreterCommand, task_logger: Logger, ai_logger: Logger) -> SWEBenchPrediction | None:
+    worker_name = "server-worker"
+    container_name = f"{task['instance_id']}_{time.time()}"
+    cwd = "/"
+    port = get_free_port()
+    address = f"127.0.0.1:{port}"
+
+    command_json_str = json.dumps(command)
+    with docker_process(
+        worker_name, container_name,
+        ["-t", "-p", f"{address}:8000"],
+        ["python", "-m", "worker.run", command_json_str, cwd]
+    ) as server_p:
+        for line in generate_lines_out(server_p):
+            task_logger.debug(line.decode())
+            if "Uvicorn running" in line.decode():
+                break
+        log_nonblocking(task_logger, server_p)
+
+        diff = run_swe_bench_task_on_oi_server(f"http://{address}", f"ws://{address}", task, task_logger, ai_logger)
+
+    return {
+        "instance_id": task["instance_id"],
+        "model_patch": diff,
+        "model_name_or_path": command["model"] if "model" in command else "<N/A>"
+    }
+
+
+def swe_bench_e2b_runner_with_run_endpoint(task: SWEBenchTask, command: OpenInterpreterCommand, task_logger: Logger, ai_logger: Logger) -> SWEBenchPrediction | None:
+    command_json_str = json.dumps(command)
+    cwd = Path("/")
+
+    with Sandbox(template="server-worker") as sandbox:
+        task_logger.debug(f"started sandbox: {sandbox.sandbox_id}")
+        task_logger.debug(f"switching current working directory to: {cwd}")
+        sandbox.commands.run(f"cd {cwd}")
+
+        sandbox.files.make_dir("main")
+        address = sandbox.get_host(port=8000)
+
+        p = sandbox.commands.run(
+            f"sudo python -m worker.run {shlex.quote(command_json_str)} {cwd / 'main'}",
+            background=True,
+            on_stdout=task_logger.debug,
+            on_stderr=task_logger.debug)
+        
+        diff = run_swe_bench_task_on_oi_server(f"https://{address}", f"wss://{address}", task, task_logger, ai_logger)
+        p.kill()
+        sandbox.kill()
+        
+    return {
+        "instance_id": task["instance_id"],
+        "model_patch": diff,
+        "model_name_or_path": command["model"] if "model" in command else "<N/A>"
+    }
+
+
+RunnerType = Literal["docker", "e2b"]
+def swe_bench_runner_with_endpoint(rt: RunnerType) -> SWEBenchRunner:
+    if rt == "docker":
+        return swe_bench_docker_runner_with_run_endpoint
+    elif rt == "e2b":
+        return swe_bench_e2b_runner_with_run_endpoint
 
 
 Task = TypeVar("Task")
@@ -313,6 +372,7 @@ class GeneralizedTask(TypedDict, Generic[Task]):
 if __name__ == "__main__":
     default_command_id = "gpt35turbo"
     default_split = "dev"
+    default_runner_type: RunnerType = "e2b"
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--command", action="store", type=str, default=default_command_id)
@@ -356,71 +416,71 @@ if __name__ == "__main__":
     run_file_handler.setFormatter(formatter)
     module_logger.addHandler(run_file_handler)
 
-    with TemporaryDirectory() as repos_dir:
-        runner = swe_bench_docker_runner()
-
-        def run_task(task: SWEBenchTask, command: OpenInterpreterCommand) -> SWEBenchPrediction:
-            task_logger = module_logger.getChild(task["instance_id"])
-            try:
-                result = runner(task, command, task_logger)
-            except BaseException as e:
-                task_logger.exception(traceback.format_exc())
-            
+    runner = swe_bench_runner_with_endpoint(default_runner_type)
+    def run_task(task: SWEBenchTask, command: OpenInterpreterCommand) -> SWEBenchPrediction | None:
+        task_logger, ai_logger = make_container_loggers(CURRENT_RUN, module_logger, task["instance_id"])
+        try:
+            result = runner(task, command, task_logger, ai_logger)
             return result
+        except BaseException as e:
+            task_logger.exception(traceback.format_exc())
+            return None
 
-        with ThreadPoolExecutor(max_workers=args.nworkers) as pool:
-            n_finished_lock = threading.Lock()
-            n_finished = 0
-            def make_fs(id: str):
-                def start():
-                    module_logger.info(f"task {id}: RUNNING...")
-                def log(s: str):
-                    module_logger.info(f"task {id} log: {s}")
-                def done(r: SWEBenchPrediction):
-                    global n_finished, n_finished_lock
-                    with n_finished_lock:
-                        n_finished += 1
-                    module_logger.info(f"task {id}: DONE! ({n_finished}/{total})")
-                return start, log, done
+    with ThreadPoolExecutor(max_workers=args.nworkers) as pool:
+        n_finished_lock = threading.Lock()
+        n_finished = 0
+        def make_fs(id: str):
+            def start():
+                module_logger.info(f"task {id}: RUNNING...")
+            def log(s: str):
+                module_logger.info(f"task {id} log: {s}")
+            def done(r: SWEBenchPrediction | None):
+                global n_finished, n_finished_lock
+                with n_finished_lock:
+                    n_finished += 1
+                module_logger.info(f"task {id}: DONE! ({n_finished}/{total})")
+            return start, log, done
 
-            run_task_args = [(task, command, make_fs(task["instance_id"])) for task in tasks]
-            apps = []
-            for args in run_task_args:
-                tlc = TaskLifecycle[SWEBenchPrediction]()
-                start, log, done = make_fs(args[0]["instance_id"])
-                tlc.add_start_fn(start)
-                tlc.add_done_fn(done)
-                apps.append((tlc.wrap(run_task), (*args[:-1],)))
-            
-            module_logger.info(f"Running {total} tasks across {pool._max_workers} workers...")
+        run_task_args = [(task, command, make_fs(task["instance_id"])) for task in tasks]
+        apps = []
+        for args in run_task_args:
+            tlc = TaskLifecycle[SWEBenchPrediction | None]()
+            start, log, done = make_fs(args[0]["instance_id"])
+            tlc.add_start_fn(start)
+            tlc.add_done_fn(done)
+            apps.append((tlc.wrap(run_task), (*args[:-1],)))
+        
+        module_logger.info(f"Running {total} tasks across {pool._max_workers} workers...")
 
-            futures = [pool.submit(fn, *args) for fn, args in apps]
-            
-            for f in as_completed(futures):
-                patches.append(f.result())
-            
-            module_logger.info("Finished!")
+        futures = [pool.submit(fn, *args) for fn, args in apps]
+        
+        for f in as_completed(futures):
+            p = f.result()
+            if p is not None:
+                patches.append(p)
+        
+        module_logger.info("Finished!")
 
-            save_path = CURRENT_RUN / "predictions.json"
-            module_logger.info(f"Saving SWE-Bench prediction to {save_path}.")
+        save_path = CURRENT_RUN / "predictions.json"
+        module_logger.info(f"Saving SWE-Bench prediction to {save_path}.")
 
-            to_run = "\n  ".join([
-                "python -m swebench.harness.run_evaluation \\",
-                    f"--dataset_name {dataset_path} \\",
-                    f"--predictions_path {save_path.absolute()} \\",
-                    # I don't remember where I got the following formula from but I think it's a good idea.
-                    f"--max_workers {min(24, int(0.75 * (os.cpu_count() or 2)))} \\",
-                    f"--run_id {run_id} \\",
-                    f"--split {split}",
-            ])
-            # using print here because the formatting gets in the way of copy-pasting.
-            print()
-            print("A few things...")
-            print(f"1) Logs saved to: {CURRENT_RUN.absolute()}")
-            print("2) Run the following within SWE-Bench's root directory to evaluate the generated patches.")
-            print("=====COPY=====")
-            print(to_run)
-            print("===END COPY===")
-            
-            with open(save_path, "a") as f:
-                json.dump(patches, f)
+        to_run = "\n  ".join([
+            "python -m swebench.harness.run_evaluation \\",
+                f"--dataset_name {dataset_path} \\",
+                f"--predictions_path {save_path.absolute()} \\",
+                # following from https://github.com/princeton-nlp/SWE-bench?tab=readme-ov-file#-usage
+                f"--max_workers {min(24, int(0.75 * (os.cpu_count() or 2)))} \\",
+                f"--run_id {run_id} \\",
+                f"--split {split}",
+        ])
+        # using print here because the formatting gets in the way of copy-pasting.
+        print()
+        print("A few things...")
+        print(f"1) Logs saved to: {CURRENT_RUN.absolute()}")
+        print("2) Run the following within SWE-Bench's root directory to evaluate the generated patches.")
+        print("=====COPY=====")
+        print(to_run)
+        print("===END COPY===")
+        
+        with open(save_path, "a") as f:
+            json.dump(patches, f)

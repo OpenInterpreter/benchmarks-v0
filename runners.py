@@ -149,77 +149,6 @@ def docker_daemon(image_name: str, run_args: List[str]) -> Iterator[str]:
             raise RuntimeError(killed_output)
 
 
-
-
-@contextmanager
-def docker_env(image_name: str, run_args: List[str], container_fs_mount: str) -> Iterator[Environment]:
-    with TemporaryDirectory() as td:
-        p = subprocess.run(
-            ["docker", "run", "-td", "-v", f"{td}:{container_fs_mount}", *run_args, image_name],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            stdin=subprocess.DEVNULL,
-            text=True)
-        container_id = p.stdout.strip()
-
-        def exec(cmd: List[str]) -> Executing:
-            p = subprocess.Popen(
-                ["docker", "exec", "-t", container_id, *cmd],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL)
-            return PopenExecuting(p)
-
-        try:
-            yield StructuredEnvironment(
-                exec_f=exec,
-                fs=LocalBasedFS(td))
-        finally:
-            p = subprocess.run(
-                ["docker", "kill", container_id],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                stdin=subprocess.DEVNULL,
-                text=True)
-            killed_output = p.stdout.strip()
-            if killed_output != container_id:
-                raise RuntimeError(killed_output)
-
-
-class DockerEnvBenchmarkRunner(BenchmarkRunner):
-    WORKER_NAME = "worker"
-
-    def run_and_judge(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, recorder: Recorder) -> Tuple[List[LMC], ResultStatus]:
-        zs = lt.to_zero_shot()
-        command_json_str = json.dumps(command)
-        container_name = f"{zs['id']}_{time.time()}"
-        container_mount = "/main"
-        output = "output"
-
-        with docker_env("worker", ["--name", container_name], container_mount) as env:
-            fs = env.get_fs()
-            fs.mkdir(output, create_parents=True)
-            lt.setup_env(env)
-
-            env.exec([
-                "python", "-m", "worker.run",
-                command_json_str, f"{shlex.quote(zs['prompt'])}", container_mount, f"{container_mount}/{output}"
-            ]).wait_with(stdout=recorder.write)
-
-            messages_path = f"{output}/{worker.OUTPUT_PATH}"
-            if not fs.exists(messages_path):
-                recorder.log(f"couldn't find {messages_path}!")
-                messages = []
-            else:
-                with fs.open(messages_path) as f:
-                    messages = json.load(f)
-
-            return messages, lt.judge(env, messages)
-    
-    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, write: Callable[[bytes], None], log: Callable[[str], None]) -> List[LMC]:
-        raise NotImplementedError()
-    
-
 def get_free_port():
     # sort of cursed but its fine.
     # basis from https://stackoverflow.com/questions/1365265/on-localhost-how-do-i-pick-a-free-port-number.
@@ -241,10 +170,11 @@ def talk_to_oi_server(address: str, prompt: str, write: Callable[[bytes], None])
     Assumes the server is running.
     """
     def is_done(msg: LMC) -> bool:
+        # {"role": "server", "type": "status", "content": "complete"}
         return (
             "role" in msg and msg["role"] == "server"
-            and "type" in msg and msg["type"] == "completion"
-            and "content" in msg and "DONE" in msg["content"]
+            and "type" in msg and msg["type"] == "status"
+            and "content" in msg and msg["content"] == "complete"
         )
     
     def recv(c: Connection, timeout: int) -> LMC | None:
@@ -255,12 +185,12 @@ def talk_to_oi_server(address: str, prompt: str, write: Callable[[bytes], None])
 
     messages: List[LMC] = []
 
-    with connect(f"ws://{address}") as c:
+    with connect(address) as c:
         c.send(json.dumps({"role": "user", "type": "message", "start": True}))
         c.send(json.dumps({"role": "user", "type": "message", "content": prompt}))
         c.send(json.dumps({"role": "user", "type": "message", "end": True}))
 
-        timeout = 20 * 60
+        timeout = int(10 * 60)
         current_msg = recv(c, timeout)
         acc = Accumulator()
         while current_msg is not None and not is_done(current_msg):
@@ -284,7 +214,7 @@ class DockerServerBenchmarkRunner(BenchmarkRunner):
         command_json_str = json.dumps(command)
         port = get_free_port()
 
-        with docker_env("server-worker", ["--name", container_name, "-p", f"{port}:8000"], container_mount) as env:
+        with docker_daemon("server-worker", ["--name", container_name, "-p", f"{port}:8000"], container_mount) as env:
             lt.setup_env(env)
 
             e = env.exec(["python", "-m", "worker.run", command_json_str, container_mount])
