@@ -137,7 +137,7 @@ class BenchmarkRunner(ABC):
 
 
 class DefaultBenchmarkRunner(BenchmarkRunner):
-    def run(self, lt: LoadedTask, command: OpenInterpreterCommand, prompt: str, write) -> List[LMC]:
+    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, prompt: str, write: Callable[[bytes], None] = lambda _: None) -> List[LMC]:
         with tempfile.TemporaryDirectory() as worker_dir:
             input_dir = Path(worker_dir) / Path("input")
             output_dir = Path(worker_dir) / Path("output")
@@ -161,7 +161,7 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
 class DockerBenchmarkRunner(BenchmarkRunner):
     WORKER_NAME = "worker"
 
-    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, prompt: str, write) -> List[LMC]:
+    def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, prompt: str, write: Callable[[bytes], None] = lambda _: None) -> List[LMC]:
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / Path("output")
             input_dir = Path(temp_dir) / Path("input")
@@ -236,14 +236,14 @@ def run_benchmark(benchmark: TasksStore, mod: TaskSetModifier, command: OpenInte
 def run_task(lt: LoadedTask[Task], command: OpenInterpreterCommand, runner: BenchmarkRunner) -> TaskResult:
     zstask = lt.to_zero_shot()
     start = datetime.now()
+    messages = []
+    status = "error"
     try:
         messages = runner.run(lt, command, zstask["prompt"], lambda _: None)
         status = lt.to_result_status(messages)
     except Exception as e:
         logger.debug(f"  task {zstask['id']}: EXCEPTION!")
         logger.debug(traceback.print_exc(file=sys.stdout))
-        status = "error"
-        messages = []
     finally:
         end = datetime.now()
         return {
@@ -583,14 +583,14 @@ def run_benchmark_worker_pool_with_server(
             asyncio.run(session.write(b))
 
         start = datetime.now()
+        status = "error"
+        messages = []
         try:
             messages = rnnr.run(lt, cmd, zs["prompt"], write)
             status = lt.to_result_status(messages)
         except Exception as e:
             logger.debug(f"  task {zs['id']}: EXCEPTION!")
             logger.debug(traceback.print_exc(file=sys.stdout))
-            status = "error"
-            messages = []
         finally:
             end = datetime.now()
             return {

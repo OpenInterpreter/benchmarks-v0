@@ -5,3 +5,4 @@ fsspec
 uvicorn
 websockets
 rich
+fastapi
