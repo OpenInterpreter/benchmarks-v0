@@ -41,6 +41,8 @@ class ArgumentsNamespace(argparse.Namespace):
     runner: str
     benchmark: str
     bfile: Optional[str]
+    agent: Optional[str]
+    requirements: Optional[str]
 
 
 task_stores = {
@@ -64,6 +66,8 @@ if __name__ == "__main__":
     parser.add_argument("-r", "--runner", action="store", type=str, default=default_runner, help=f"the kind of worker to run each task on ({', '.join(runners.keys())})")
     parser.add_argument("-b", "--benchmark", action="store", default=default_benchmark, help=f"where to retreive the list of tasks to run from ({', '.join(task_stores.keys())})")
     parser.add_argument("-bf", "--bfile", action="store", type=str, help="only works when '--benchmark custom' is used")
+    parser.add_argument("-a", "--agent", action="store", type=str, help="path to the agent python script to run (only supported for docker)")
+    parser.add_argument('-rq', "--requirements", action="store", type=str, help="path to the requirements file necessary to run the agent (only works when --agent is used)")
     args = parser.parse_args(namespace=ArgumentsNamespace())
 
     if args.list:
@@ -84,8 +88,20 @@ if __name__ == "__main__":
     if args.benchmark == "custom" and args.bfile is None:
         print(f"'--benchmark custom' can only be used if '--bflag <file-path>' is also used.")
         exit(1)
+    if args.requirements is not None and args.agent is None:
+        print("'--requirements <requirements-path>' can only be used '--agent <agent-path>' is also used.")
+        exit(1)
+    if args.agent is not None and args.runner != "docker":
+        print("'--agent <agent-path>' can only be used with '--runner docker'.")
+        exit(1)
+
     tasks = task_stores[args.benchmark] if args.benchmark in task_stores else CustomTasks.from_csv(args.bfile)  # type: ignore
     runner = runners[args.runner]
+
+    if args.agent is not None and args.runner == "docker":
+        script_path = Path(args.agent)
+        requirements_path = Path(args.requirements) if args.requirements is not None else None
+        runner = DockerBenchmarkRunner(script_path, requirements_path)
     
     print("command configuration:", args.command)
     now_utc = datetime.now(timezone.utc)

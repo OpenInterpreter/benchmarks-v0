@@ -161,24 +161,44 @@ class DefaultBenchmarkRunner(BenchmarkRunner):
 class DockerBenchmarkRunner(BenchmarkRunner):
     WORKER_NAME = "worker"
 
+    def __init__(self, agent_script_path: Path | None = None, requirements_path: Path | None = None):
+        self.agent_script_path = agent_script_path
+        self.requirements_path = requirements_path
+        print("agent", self.agent_script_path)
+        print("reqs", self.requirements_path)
+
     def run(self, lt: LoadedTask[Task], command: OpenInterpreterCommand, prompt: str, write: Callable[[bytes], None] = lambda _: None) -> List[LMC]:
         with tempfile.TemporaryDirectory() as temp_dir:
             output_dir = Path(temp_dir) / Path("output")
             input_dir = Path(temp_dir) / Path("input")
+            fs = LocalBasedFS(str(input_dir))
             command_json_str = json.dumps(command)
             input_dir.mkdir(parents=True, exist_ok=True)
             output_dir.mkdir(parents=True, exist_ok=True)
-            lt.setup_input_dir(LocalBasedFS(str(input_dir)))
+            lt.setup_input_dir(fs)
             container_name = f"{lt.to_zero_shot()['id']}_{time.time()}"
+
             dcmd = [
                 "docker", "run", "-t",
                 "-v", f"{input_dir}:/input", "-v", f"{output_dir}:/output",
                 "--name", container_name,
                 DockerBenchmarkRunner.WORKER_NAME,
-                command_json_str, f"{shlex.quote(prompt)}", "/", "/output"
+                command_json_str, f"{shlex.quote(prompt)}", "/", "/output",
             ]
 
-            # subprocess.run(dcmd, stdout=subprocess.DEVNULL)
+            if self.agent_script_path is not None:
+                agent_script_path = self.agent_script_path
+                new_agent_script_path = input_dir / "agent.py"
+                agent_script_contents = agent_script_path.read_text()
+                new_agent_script_path.write_text(agent_script_contents)
+                dcmd.append(str(new_agent_script_path.relative_to(temp_dir)))
+
+                if self.requirements_path is not None:
+                    new_agent_reqs_path = input_dir / "requirements.py"
+                    reqs_content = self.requirements_path.read_text()
+                    new_agent_reqs_path.write_text(reqs_content)
+                    dcmd.append(str(new_agent_reqs_path.relative_to(temp_dir)))
+
             p = subprocess.Popen(dcmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             while p.poll() is None and p.stdout is not None:
                 write(p.stdout.readline())
